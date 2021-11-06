@@ -28,12 +28,13 @@ Quindi, quando l'utente necessita di un contenuto, prima contatta il server indi
 */
 int clientNum = 0;
 //pthread_mutex_t clientNumLock = PTHREAD_MUTEX_INITIALIZER;
-struct PeerContact peersContacts[MAXPEERLIST];
+struct PeerContact peersContacts[MAX_PEERS_SIZE];
 
 void *HandleClient(void *connectionSocketFD)
 {
     int socketFD = *((int*)connectionSocketFD);
-    if (write(socketFD, peersContacts, sizeof(peersContacts[0]) * (clientNum - 1)) < 0)
+    int bytesWritten;
+    if ((bytesWritten = write(socketFD, peersContacts, sizeof(peersContacts[0]) * (clientNum - 1))) < 0)
     {
         perror("Failed to write");
         exit(6);
@@ -51,11 +52,10 @@ int main(int argc, char *argv[])
     int connectionSocketFD;
     struct sockaddr_in serverAddress;
     struct sockaddr_in clientAddress;
-    int maxConnectionsQueue = MAXPEERLIST;
     listenSocketFD = socket(AF_INET, SOCK_STREAM, 0); // Domain (family), type, and protocol (Internet, TCP, specify protocol - 0 is default).
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_addr.s_addr = htonl(INADDR_ANY); // Accept connections from any address associated to the server.
-    serverAddress.sin_port = htons(SERVER_PORT); // Htons is "Host to Network" (converts endianess if needed); s for short, l for long.
+    serverAddress.sin_port = htons(DISCOVERY_PORT); // Htons is "Host to Network" (converts endianess if needed); s for short, l for long.
     int enable = 1;
     if ((setsockopt(listenSocketFD, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int))) < 0)
     {
@@ -67,13 +67,13 @@ int main(int argc, char *argv[])
         perror("Failed to bind the socket");
         exit(2);
     }
-    if (listen(listenSocketFD, maxConnectionsQueue) < 0) // Listen for incoming connections requests (up to a queue of 1024 before refusing).
+    if (listen(listenSocketFD, MAX_PEERS_SIZE) < 0) // Listen for incoming connections requests (up to a queue of 1024 before refusing).
     {
         perror("Failed to listen");
         exit(3);
     }
     printf("Listening to incoming connections.\n");
-    pthread_t peerThreads[MAXPEERLIST];
+    pthread_t peerThreads[MAX_PEERS_SIZE];
     int i = 0;
     while (1)
     {
@@ -96,9 +96,9 @@ int main(int argc, char *argv[])
         {
             printf("Failed to create the new thread\n");
         }
-        if (i >= MAXPEERLIST)
+        if (i >= MAX_PEERS_SIZE)
         {
-            for (int j = 0; j < MAXPEERLIST; j++)
+            for (int j = 0; j < MAX_PEERS_SIZE; j++)
             {
                 pthread_join(peerThreads[j], NULL);
             }
