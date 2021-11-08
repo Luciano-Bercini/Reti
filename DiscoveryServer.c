@@ -20,38 +20,67 @@ Se un peer riceve una notifica dal server, invia a tutti gli altri peer la lista
 Un peer che riceve una lista di contatti verifica se è presente un proprio id e nel caso mostra un messaggio all’utente.
 I peer devono comunicare direttamente tra di loro senza il tramite del server.
 */
-/*
-Il P2P con Discovery Server = possiede un server centrale chiamato, appunto, Discovery,
-il quale utente (ovvero il Peer che in questo caso funge da client) comunica la propria esistenza al momento dell'avvio e 
-riceve in risposta una lista con gli altri nomi della rete. Con essa l'utente può interrogare qualunque partecipante per conoscerne i contenuti.
-Quindi, quando l'utente necessita di un contenuto, prima contatta il server individualmente, poi inoltra la richiesta.
-*/
-int clientNum = 0;
-//pthread_mutex_t clientNumLock = PTHREAD_MUTEX_INITIALIZER;
-struct PeerContact peersContacts[MAX_PEERS_SIZE];
 
-void *HandleClient(void *connectionSocketFD)
+const int NOTIFY_TIME_INTERVAL = 10;
+int clientNum = 0;
+struct PeerContact clients[MAX_PEERS_SIZE];
+
+void *sendPeerListToClient(void *connectionSocketFD)
 {
     int socketFD = *((int*)connectionSocketFD);
     int bytesWritten;
-    if ((bytesWritten = write(socketFD, peersContacts, sizeof(peersContacts[0]) * (clientNum - 1))) < 0)
+    if ((bytesWritten = write(socketFD, clients, sizeof(clients[0]) * (clientNum - 1))) < 0)
     {
-        perror("Failed to write");
-        exit(6);
+        printf("Failed to write to socket.\n");
     }
-    printf("A list with %d peers has been sent to the new peer.\n", clientNum - 1);
+    else
+    {
+        printf("A list with %d other peers has been sent to the newly registered peer.\n", clientNum - 1);
+    }
     shutdown(socketFD, SHUT_WR);
     close(socketFD); // Closing the connection to our dear client.
     printf("Closing the connection with the client.\n");
-    pthread_exit(0);
 }
-
+void *notifyClients()
+{
+    int connectionSocketFD;
+    int threadRetVal;
+    char *notificationMsg = "Contact Notification\n";
+    for (int i = 0; i < clientNum; i++)
+    {
+        if ((connectionSocketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+        {
+            pthread_perrorexit("Failed to open the socket", &threadRetVal);
+        }
+        struct sockaddr_in peerAddress;
+        peerAddress.sin_family = AF_INET;
+        peerAddress.sin_addr.s_addr = clients[i].address;
+        peerAddress.sin_port = htons(PEER_PORT);
+        char addressASCII[40];
+        inet_ntop(AF_INET, &clients[i].address, addressASCII, sizeof(addressASCII));
+        if (connect(connectionSocketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) < 0)
+        {
+            pthread_perrorexit("Failed to connect", &threadRetVal);
+        }
+        for (int j = 0; j < clientNum; j++)
+        {
+            int n;
+            if (n = (write(connectionSocketFD, notificationMsg, strlen(notificationMsg))) < 0)
+            {
+                pthread_perrorexit("Failed to write to socket", &threadRetVal);
+            }
+            printf("Sent a notification to peer at address [%s:%hu].\n", addressASCII, PEER_PORT);
+            shutdown(connectionSocketFD, SHUT_WR);
+            close(connectionSocketFD); // Closing the connection with our dear client.
+        }
+    }
+    sleep(NOTIFY_TIME_INTERVAL);
+}
 int main(int argc, char *argv[])
 {
     int listenSocketFD;
     int connectionSocketFD;
     struct sockaddr_in serverAddress;
-    struct sockaddr_in clientAddress;
     listenSocketFD = socket(AF_INET, SOCK_STREAM, 0); // Domain (family), type, and protocol (Internet, TCP, specify protocol - 0 is default).
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_addr.s_addr = htonl(INADDR_ANY); // Accept connections from any address associated to the server.
@@ -59,42 +88,38 @@ int main(int argc, char *argv[])
     int enable = 1;
     if ((setsockopt(listenSocketFD, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int))) < 0)
     {
-        perror("Failed to set option to socket");
-        exit(10);
+        perrorexit("Failed to set option to socket");
     }
     if (bind(listenSocketFD, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) < 0) // Assigns (binds) an IP address to the socket.
     {
-        perror("Failed to bind the socket");
-        exit(2);
+        perrorexit("Failed to bind the socket");
     }
     if (listen(listenSocketFD, MAX_PEERS_SIZE) < 0) // Listen for incoming connections requests (up to a queue of 1024 before refusing).
     {
-        perror("Failed to listen");
-        exit(3);
+        perrorexit("Failed to listen");
     }
     printf("Listening to incoming connections.\n");
+    struct sockaddr_in clientAddress;
     pthread_t peerThreads[MAX_PEERS_SIZE];
     int i = 0;
     while (1)
     {
-        // Accept a connection from the listen queue and creates a new socket to communicate with the client.
-        // Second and third argument help identify the client, they can be NULL.
+        // Accept a connection from the listen queue and creates a new socket to communicate with the client; second and third argument help identify the client.
         socklen_t clientSize = sizeof(clientAddress);
         if ((connectionSocketFD = accept(listenSocketFD, (struct sockaddr*)&clientAddress, &clientSize)) < 0)
         {
-            perror("Failed to accept connection");
-            exit(4);
+            perrorexit("Failed to accept connection");
         }
         char *addrASCII = inet_ntoa(clientAddress.sin_addr);
         uint port = ntohs(clientAddress.sin_port);
         printf("Accepting a new connection with peer [%s:%u].\n", addrASCII, port);
         printf("Registering the new peer to the list...\n");
-        peersContacts[clientNum].address = clientAddress.sin_addr.s_addr;
-        peersContacts[clientNum].port = clientAddress.sin_port;
+        clients[clientNum].address = clientAddress.sin_addr.s_addr;
+        clients[clientNum].port = clientAddress.sin_port;
         clientNum++;
-        if (pthread_create(&peerThreads[i++], NULL, HandleClient, (void*)&connectionSocketFD) != 0)
+        if (pthread_create(&peerThreads[i++], NULL, sendPeerListToClient, (void*)&connectionSocketFD) != 0)
         {
-            printf("Failed to create the new thread\n");
+            printf("Failed to create the new thread.\n");
         }
         if (i >= MAX_PEERS_SIZE)
         {

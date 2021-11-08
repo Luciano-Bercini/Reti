@@ -6,15 +6,16 @@
 #include <sys/socket.h>
 #include <arpa/inet.h> // IP addresses conversion utility.
 #include <time.h>
+#include <pthread.h>
 #include "SocketsWrapper.h"
 
-int Socket(int domain, int type, int protocol)
+void perrorexit(const char *s)
 {
-    int n;
-    if ((n = socket(domain, type, protocol)) < 0) // Domain (family), type, and protocol (Internet, TCP, specify protocol - 0 is default).
-    {
-        perror("Failed to open the socket");
-        exit(1);
-    }
-    return n;
+    perror(s);
+    exit(EXIT_FAILURE);
+}
+void pthread_perrorexit(const char *s, int *retVal)
+{
+    perror(s);
+    pthread_exit(retVal);
 }
