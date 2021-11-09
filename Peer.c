@@ -76,7 +76,7 @@ void *sendNewIDs()
             }
             struct sockaddr_in peerAddress;
             peerAddress.sin_family = AF_INET;
-            peerAddress.sin_addr.s_addr = reachablePeers[i].address;
+            peerAddress.sin_addr.s_addr = htonl(reachablePeers[i].address);
             peerAddress.sin_port = htons(PEER_PORT);
             char addressASCII[40];
             inet_ntop(AF_INET, &reachablePeers[i].address, addressASCII, sizeof(addressASCII));
@@ -127,7 +127,7 @@ void *sendContactsIDs()
         }
         struct sockaddr_in peerAddress;
         peerAddress.sin_family = AF_INET;
-        peerAddress.sin_addr.s_addr = reachablePeers[i].address;
+        peerAddress.sin_addr.s_addr = htonl(reachablePeers[i].address);
         peerAddress.sin_port = htons(PEER_PORT);
         char addressASCII[40];
         inet_ntop(AF_INET, &reachablePeers[i].address, addressASCII, sizeof(addressASCII));
@@ -160,7 +160,7 @@ int main(int argc, char *argv[])
     }
     struct sockaddr_in discoveryAddress;
     discoveryAddress.sin_family = AF_INET;
-    discoveryAddress.sin_addr.s_addr = inet_addr(SERVER_ADDRESS);
+    discoveryAddress.sin_addr.s_addr = inet_addr(SERVER_ADDRESS); // Returns the address in Network Byte Order.
     discoveryAddress.sin_port = htons(DISCOVERY_PORT);
     if (connect(connectionSocketFD, (struct sockaddr*)&discoveryAddress, sizeof(discoveryAddress)) < 0)
     {
@@ -208,28 +208,33 @@ int main(int argc, char *argv[])
     struct sockaddr_in clientAddress;
     pthread_t peerThreads[MAX_PEERS_SIZE];
     int i = 0;
-    while (1) // Accept connections with other peers.
+    while (1) // Accept a connection (it may come from other peers or from and the server).
     {
         socklen_t clientSize = sizeof(clientAddress);
         if ((connectionSocketFD = accept(listenSocketFD, (struct sockaddr*)&clientAddress, &clientSize)) < 0)
         {
             perrorexit("Failed to accept connection");
         }
-        // Here we could check if we accepted a connection with another peer,
-        // Or with the server.
-        printf("Here we have to do some more stuff!!\n");
-        printf("A new connection has been accepted!\n");
-        if (pthread_create(&peerThreads[i++], NULL, receiveID, (void*)&connectionSocketFD) != 0)
+        if (ntohl(clientAddress.sin_addr.s_addr) == ntohl(inet_addr(SERVER_ADDRESS)))
         {
-            printf("Failed to create the thread \"receiveID\".\n");
+            printf("A new connection with the server has been accepted.\n");
+            printf("MORE STUFF TO DO.\n");
         }
-        if (i >= MAX_PEERS_SIZE)
+        else
         {
-            for (int j = 0; j < MAX_PEERS_SIZE; j++)
+            printf("A new connection with a peer has been accepted.\n");
+            if (pthread_create(&peerThreads[i++], NULL, receiveID, (void*)&connectionSocketFD) != 0)
             {
-                pthread_join(peerThreads[j], NULL);
+                printf("Failed to create the thread \"receiveID\".\n");
             }
-            i = 0;
+            if (i >= MAX_PEERS_SIZE)
+            {
+                for (int j = 0; j < MAX_PEERS_SIZE; j++)
+                {
+                    pthread_join(peerThreads[j], NULL);
+                }
+                i = 0;
+            }
         }
     }
     return 0;

@@ -46,24 +46,24 @@ void *notifyClients()
     int connectionSocketFD;
     int threadRetVal;
     char *notificationMsg = "Contact Notification\n";
-    for (int i = 0; i < clientNum; i++)
+    while (1)
     {
-        if ((connectionSocketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+        for (int i = 0; i < clientNum; i++)
         {
-            pthread_perrorexit("Failed to open the socket", &threadRetVal);
-        }
-        struct sockaddr_in peerAddress;
-        peerAddress.sin_family = AF_INET;
-        peerAddress.sin_addr.s_addr = clients[i].address;
-        peerAddress.sin_port = htons(PEER_PORT);
-        char addressASCII[40];
-        inet_ntop(AF_INET, &clients[i].address, addressASCII, sizeof(addressASCII));
-        if (connect(connectionSocketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) < 0)
-        {
-            pthread_perrorexit("Failed to connect", &threadRetVal);
-        }
-        for (int j = 0; j < clientNum; j++)
-        {
+            if ((connectionSocketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+            {
+                pthread_perrorexit("Failed to open the socket", &threadRetVal);
+            }
+            struct sockaddr_in peerAddress;
+            peerAddress.sin_family = AF_INET;
+            peerAddress.sin_addr.s_addr = htonl(clients[i].address);
+            peerAddress.sin_port = htons(PEER_PORT);
+            char addressASCII[40];
+            inet_ntop(AF_INET, &clients[i].address, addressASCII, sizeof(addressASCII));
+            if (connect(connectionSocketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) < 0)
+            {
+                pthread_perrorexit("Failed to connect", &threadRetVal);
+            }
             int n;
             if (n = (write(connectionSocketFD, notificationMsg, strlen(notificationMsg))) < 0)
             {
@@ -73,8 +73,8 @@ void *notifyClients()
             shutdown(connectionSocketFD, SHUT_WR);
             close(connectionSocketFD); // Closing the connection with our dear client.
         }
+        sleep(NOTIFY_TIME_INTERVAL);
     }
-    sleep(NOTIFY_TIME_INTERVAL);
 }
 int main(int argc, char *argv[])
 {
@@ -98,7 +98,13 @@ int main(int argc, char *argv[])
     {
         perrorexit("Failed to listen");
     }
-    printf("Listening to incoming connections.\n");
+    printf("Setting up the notification service.\n");
+    pthread_t notificationThread;
+    if (pthread_create(&notificationThread, NULL, notifyClients, NULL) != 0)
+    {
+        printf("Failed to create the notification thread!\n");
+    }
+    printf("Listening to incoming connections...\n");
     struct sockaddr_in clientAddress;
     pthread_t peerThreads[MAX_PEERS_SIZE];
     int i = 0;
@@ -114,8 +120,8 @@ int main(int argc, char *argv[])
         uint port = ntohs(clientAddress.sin_port);
         printf("Accepting a new connection with peer [%s:%u].\n", addrASCII, port);
         printf("Registering the new peer to the list...\n");
-        clients[clientNum].address = clientAddress.sin_addr.s_addr;
-        clients[clientNum].port = clientAddress.sin_port;
+        clients[clientNum].address = ntohl(clientAddress.sin_addr.s_addr);
+        clients[clientNum].port = ntohs(clientAddress.sin_port);
         clientNum++;
         if (pthread_create(&peerThreads[i++], NULL, sendPeerListToClient, (void*)&connectionSocketFD) != 0)
         {
