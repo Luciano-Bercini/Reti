@@ -9,6 +9,7 @@
 #include <time.h>
 #include <pthread.h>
 #include "Wrapper.h"
+#include "Utilities.h"
 
 /*
 Progettare ed implementare un’applicazione p2p per il tracciamento dei contatti.
@@ -25,7 +26,7 @@ char **generatedIDs;
 int generatedIDNum = 0;
 char **contactIDs;
 int contacts = 0;
-struct PeerContact reachablePeers[MAX_PEERS_SIZE];
+in_addr_t reachablePeers[MAX_PEERS_SIZE];
 int reachablePeersNum = 0;
 
 const int ID_BYTE_SIZE = 64;
@@ -76,10 +77,10 @@ void *sendNewIDs()
             }
             struct sockaddr_in peerAddress;
             peerAddress.sin_family = AF_INET;
-            peerAddress.sin_addr.s_addr = htonl(reachablePeers[i].address);
+            peerAddress.sin_addr.s_addr = htonl(reachablePeers[i]);
             peerAddress.sin_port = htons(PEER_PORT);
             char addressASCII[40];
-            inet_ntop(AF_INET, &reachablePeers[i].address, addressASCII, sizeof(addressASCII));
+            inet_ntop(AF_INET, &peerAddress.sin_addr, addressASCII, sizeof(addressASCII));
             printf("Attempting to connect with peer at address [%s:%hu].\n", addressASCII, PEER_PORT); 
             if (connect(connectionSocketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) < 0)
             {
@@ -97,15 +98,27 @@ void *sendNewIDs()
         sleep(ID_TIME_INTERVAL);
     }
 }
+int isIDInGeneratedIDs(char *id)
+{
+    for (int i = 0; i < generatedIDNum; i++)
+    {
+        if (strcmp(id, generatedIDs[i]) == 0)
+        {
+            return 0;
+        }
+    }
+    return -1;
+}
 void *receiveID(void *connectionSocketFD)
 {
     int socketFD = *((int*)connectionSocketFD);
     int bytesWritten;
     char idBuff[ID_BYTE_SIZE];
-    if ((bytesWritten = read(socketFD, idBuff, sizeof(ID_BYTE_SIZE))) < 0)
+    while ((bytesWritten = read(socketFD, idBuff, sizeof(ID_BYTE_SIZE))) > 0);
+    printf("ID BUFF %s\n",idBuff);
+    if (isIDInGeneratedIDs(idBuff) == 0)
     {
-        perror("Failed to read");
-        exit(6);
+        printf("Sei stato in contatto con l'id %s.\n", idBuff);
     }
     addNewID(contactIDs, &contacts, idBuff);
     contacts++;
@@ -127,16 +140,17 @@ void *sendContactsIDs()
         }
         struct sockaddr_in peerAddress;
         peerAddress.sin_family = AF_INET;
-        peerAddress.sin_addr.s_addr = htonl(reachablePeers[i].address);
+        peerAddress.sin_addr.s_addr = htonl(reachablePeers[i]);
         peerAddress.sin_port = htons(PEER_PORT);
         char addressASCII[40];
-        inet_ntop(AF_INET, &reachablePeers[i].address, addressASCII, sizeof(addressASCII));
+        inet_ntop(AF_INET, &peerAddress.sin_addr, addressASCII, sizeof(addressASCII));
         printf("Attempting to connect with peer at address [%s:%hu] to send our list of contacts.\n", addressASCII, PEER_PORT); 
         if (connect(connectionSocketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
         {
             for (int j = 0; j < contacts; j++)
             {
                 int n;
+                printf("YOLO %s\n", contactIDs[j]);
                 if (n = (write(connectionSocketFD, contactIDs[j], ID_BYTE_SIZE)) < 0)
                 {
                     pthread_perrorexit("Failed to write to socket", &threadRetVal);
@@ -177,10 +191,6 @@ int main(int argc, char *argv[])
     }
     reachablePeersNum = reachablePeersNum / sizeof(reachablePeers[0]);
     printf("Obtained the list of peers from the discovery server.\n");
-    if (reachablePeersNum > 0)
-    {
-        printf("Address of first one is:%u\n", reachablePeers[0].address);
-    }
     shutdown(connectionSocketFD, SHUT_WR);
     close(connectionSocketFD);
     pthread_t clientThread;

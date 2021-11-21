@@ -9,6 +9,7 @@
 #include <netdb.h>
 #include <pthread.h>
 #include "Wrapper.h"
+#include "Utilities.h"
 
 /*
 Progettare ed implementare un’applicazione p2p per il tracciamento dei contatti.
@@ -22,22 +23,22 @@ I peer devono comunicare direttamente tra di loro senza il tramite del server.
 */
 
 const int NOTIFY_TIME_INTERVAL = 10;
-int clientNum = 0;
-struct PeerContact clients[MAX_PEERS_SIZE];
+int registeredClientsNum = 0;
+in_addr_t registeredClients[MAX_PEERS_SIZE];
 
 void *sendPeerListToClient(void *connectionSocketFD)
 {
     int socketFD = *((int*)connectionSocketFD);
-    if (clientNum > 0)
+    if (registeredClientsNum > 0)
     {
         int bytesWritten;
-        if ((bytesWritten = write(socketFD, clients, sizeof(clients[0]) * (clientNum - 1))) < 0)
+        if ((bytesWritten = write(socketFD, registeredClients, sizeof(registeredClients[0]) * (registeredClientsNum - 1))) < 0)
         {
             printf("Failed to write to socket.\n");
         }
         else
         {
-            printf("A list with %d other peers has been sent to the newly registered peer.\n", clientNum - 1);
+            printf("A list with %d other peers has been sent to the newly registered peer.\n", registeredClientsNum - 1);
         }
     }
     shutdown(socketFD, SHUT_WR);
@@ -51,7 +52,7 @@ void *notifyClients()
     char *notificationMsg = "A\n";
     while (1)
     {
-        for (int i = 0; i < clientNum; i++)
+        for (int i = 0; i < registeredClientsNum; i++)
         {
             if ((connectionSocketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
             {
@@ -59,7 +60,7 @@ void *notifyClients()
             }
             struct sockaddr_in peerAddress;
             peerAddress.sin_family = AF_INET;
-            peerAddress.sin_addr.s_addr = htonl(clients[i].address);
+            peerAddress.sin_addr.s_addr = htonl(registeredClients[i]);
             peerAddress.sin_port = htons(PEER_PORT);
             char addressASCII[40];
             inet_ntop(AF_INET, &peerAddress.sin_addr.s_addr, addressASCII, sizeof(addressASCII));
@@ -115,7 +116,7 @@ int main(int argc, char *argv[])
     printf("Listening to incoming connections...\n");
     struct sockaddr_in clientAddress;
     pthread_t peerThreads[MAX_PEERS_SIZE];
-    int i = 0;
+    int threadIndex = 0;
     while (1)
     {
         // Accept a connection from the listen queue and creates a new socket to communicate with the client; second and third argument help identify the client.
@@ -127,21 +128,23 @@ int main(int argc, char *argv[])
         char *addrASCII = inet_ntoa(clientAddress.sin_addr);
         uint port = ntohs(clientAddress.sin_port);
         printf("Accepting a new connection with peer [%s:%u].\n", addrASCII, port);
-        printf("Registering the new peer to the list...\n");
-        clients[clientNum].address = ntohl(clientAddress.sin_addr.s_addr);
-        clients[clientNum].port = ntohs(clientAddress.sin_port);
-        clientNum++;
-        if (pthread_create(&peerThreads[i++], NULL, sendPeerListToClient, (void*)&connectionSocketFD) != 0)
+        if (uintcontained(ntohl(clientAddress.sin_addr.s_addr), registeredClients, registeredClientsNum) != 0)
+        {
+            printf("Registering the new peer to the list...\n");
+            registeredClients[registeredClientsNum] = ntohl(clientAddress.sin_addr.s_addr);
+            registeredClientsNum++;
+        }
+        if (pthread_create(&peerThreads[threadIndex++], NULL, sendPeerListToClient, (void*)&connectionSocketFD) != 0)
         {
             printf("Failed to create the new thread.\n");
         }
-        if (i >= MAX_PEERS_SIZE)
+        if (threadIndex >= MAX_PEERS_SIZE)
         {
             for (int j = 0; j < MAX_PEERS_SIZE; j++)
             {
                 pthread_join(peerThreads[j], NULL);
             }
-            i = 0;
+            threadIndex = 0;
         }
     }
     return 0;
