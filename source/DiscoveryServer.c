@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/uio.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h> // IP addresses conversion utility.
@@ -25,31 +26,65 @@ I peer devono comunicare direttamente tra di loro senza il tramite del server.
 const int NOTIFY_TIME_INTERVAL = 10;
 int registeredClientsNum = 0;
 in_addr_t registeredClients[MAX_PEERS_SIZE];
+pthread_mutex_t registeredClientsLock = PTHREAD_MUTEX_INITIALIZER;
 
-void *sendPeerListToClient(void *connectionSocketFD)
+struct sendpeerlist_args
 {
-    int socketFD = *((int*)connectionSocketFD);
-    if (registeredClientsNum > 0)
+    int connectionSocketFD;
+    int skipElement;
+};
+
+void *sendpeerlist_toclient(void *sendpeerlist_args)
+{
+    pthread_mutex_lock(&registeredClientsLock);
+    int registeredClientsNo = registeredClientsNum;
+    pthread_mutex_unlock(&registeredClientsLock);
+    struct sendpeerlist_args peerlist_args = *((struct sendpeerlist_args*)sendpeerlist_args);
+    struct iovec *iov;
+    int iovcount = 0;
+    if (peerlist_args.skipElement >= 0)
+    {
+        iov = malloc(sizeof(struct iovec) * 2);
+        iovcount = 2;
+        ssize_t nwritten;
+        iov[0].iov_base = registeredClients;
+        iov[0].iov_len = (peerlist_args.skipElement) * sizeof(in_addr_t);
+        iov[1].iov_base = &registeredClients[peerlist_args.skipElement + 1];
+        iov[1].iov_len = (registeredClientsNo - (peerlist_args.skipElement + 1)) * sizeof(in_addr_t);
+    }
+    else
+    {
+        iov = malloc(sizeof(struct iovec));
+        iovcount = 1;
+        iov[0].iov_base = registeredClients;
+        iov[0].iov_len = registeredClientsNo * sizeof(in_addr_t);
+    }
+    if (registeredClientsNo > 0)
     {
         int bytesWritten;
-        if ((bytesWritten = write(socketFD, registeredClients, sizeof(registeredClients[0]) * (registeredClientsNum - 1))) < 0)
+        if ((bytesWritten = writev(peerlist_args.connectionSocketFD, iov, iovcount)) < 0)
         {
             printf("Failed to write to socket.\n");
         }
+        /*if ((bytesWritten = write(peerlist_args.connectionSocketFD, registeredClients, sizeof(registeredClients[0]) * registeredClientsNo)) < 0)
+        {
+            printf("Failed to write to socket.\n");
+        }*/
         else
         {
-            printf("A list with %d other peers has been sent to the newly registered peer.\n", registeredClientsNum - 1);
+            printf("A list with the other peers has been sent to the newly registered peer.\n");
         }
     }
-    shutdown(socketFD, SHUT_WR);
-    close(socketFD);
+    shutdown(peerlist_args.connectionSocketFD, SHUT_WR);
+    close(peerlist_args.connectionSocketFD);
+    free(iov);
     printf("Closed the connection with our dear client.\n");
 }
-void *notifyClients()
+void *notifyclients()
 {
     int connectionSocketFD;
     int threadRetVal;
-    char *notificationMsg = "A\n";
+    char *notificationMsg = "S\n";
     while (1)
     {
         for (int i = 0; i < registeredClientsNum; i++)
@@ -109,13 +144,14 @@ int main(int argc, char *argv[])
     }
     printf("Setting up the notification service...\n");
     pthread_t notificationThread;
-    if (pthread_create(&notificationThread, NULL, notifyClients, NULL) != 0)
+    if (pthread_create(&notificationThread, NULL, notifyclients, NULL) != 0)
     {
         printf("Failed to create the notification thread!\n");
     }
     printf("Listening to incoming connections...\n");
     struct sockaddr_in clientAddress;
     pthread_t peerThreads[MAX_PEERS_SIZE];
+    struct sendpeerlist_args peerlist_args[MAX_PEERS_SIZE];
     int threadIndex = 0;
     while (1)
     {
@@ -128,13 +164,18 @@ int main(int argc, char *argv[])
         char *addrASCII = inet_ntoa(clientAddress.sin_addr);
         uint port = ntohs(clientAddress.sin_port);
         printf("Accepting a new connection with peer [%s:%u].\n", addrASCII, port);
-        if (uintcontained(ntohl(clientAddress.sin_addr.s_addr), registeredClients, registeredClientsNum) != 0)
+        int contained = uintcontained(ntohl(clientAddress.sin_addr.s_addr), registeredClients, registeredClientsNum);
+        if (contained < 0)
         {
             printf("Registering the new peer to the list...\n");
+            pthread_mutex_lock(&registeredClientsLock);
             registeredClients[registeredClientsNum] = ntohl(clientAddress.sin_addr.s_addr);
             registeredClientsNum++;
+            pthread_mutex_unlock(&registeredClientsLock);
         }
-        if (pthread_create(&peerThreads[threadIndex++], NULL, sendPeerListToClient, (void*)&connectionSocketFD) != 0)
+        peerlist_args[threadIndex].connectionSocketFD = connectionSocketFD;
+        peerlist_args[threadIndex].skipElement = contained;
+        if (pthread_create(&peerThreads[threadIndex++], NULL, sendpeerlist_toclient, (void*)&peerlist_args[threadIndex]) != 0)
         {
             printf("Failed to create the new thread.\n");
         }
