@@ -32,38 +32,13 @@ int reachablePeersNum = 0;
 const int ID_BYTE_SIZE = 64;
 const int ID_TIME_INTERVAL = 5;
 
-char *addnewID(char ***buffer, int *count, char *id)
-{
-    *buffer = realloc(*buffer, ((*count) + 1) * sizeof(char*));
-    *buffer[*count] = malloc(ID_BYTE_SIZE);
-    strcpy(*buffer[*count], id);
-    (*count)++;
-    return id;
-}
-char *rand_alphanumID(char *buffer, size_t size)
-{
-    const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    if (size > 0)
-    {
-        size--; // Reserve space for end of string character.
-        for (size_t i = 0; i < size - 1; i++)
-        {
-            int key = rand() % (int)(sizeof(charset) - 1);
-            buffer[i] = charset[key];
-        }
-        buffer[size] = '\0';
-    }
-    return buffer;
-}
-char *dynamicrand_alphanumID()
-{
-    char* alphanumID = malloc(ID_BYTE_SIZE);
-    alphanumID = rand_alphanumID(alphanumID, ID_BYTE_SIZE);
-    return alphanumID;
-}
+char *addnewID(char ***buffer, int *count, char *id);
+char *dynamicrand_alphanumID();
+int id_alreadygenerated(char *id);
+
 void *sendnewID()
 {
-    int connectionSocketFD;
+    int socketFD;
     int threadExit;
     while (1)
     {
@@ -72,7 +47,7 @@ void *sendnewID()
         printf("A new ID has been generated: %s\n", generatedIDs[generatedIDNum - 1]);
         for (int i = 0; i < reachablePeersNum; i++)
         {
-            if ((connectionSocketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+            if ((socketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
             {
                 pthread_perrorexit("Failed to open the socket", &threadExit);
             }
@@ -83,32 +58,24 @@ void *sendnewID()
             char addressASCII[40];
             inet_ntop(AF_INET, &peerAddress.sin_addr, addressASCII, sizeof(addressASCII));
             printf("Attempting to connect with peer at address [%s:%hu].\n", addressASCII, PEER_PORT); 
-            if (connect(connectionSocketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) < 0)
+            if (connect(socketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
             {
-                pthread_perrorexit("Failed to connect", &threadExit);
+                int n;
+                if (n = (write(socketFD, alphanumID, ID_BYTE_SIZE)) < 0)
+                {
+                    pthread_perrorexit("Failed to write to socket", &threadExit);
+                }
+                printf("Sent the ID %s to my reachable peer.\n", alphanumID);
             }
-            int n;
-            if (n = (write(connectionSocketFD, alphanumID, ID_BYTE_SIZE)) < 0)
+            else
             {
-                pthread_perrorexit("Failed to write to socket", &threadExit);
+                printf("Failed to connect with neighbor peer, it might be down.\n");
             }
-            printf("Sent the ID %s to my reachable peer.\n", alphanumID);
-            shutdown(connectionSocketFD, SHUT_WR);
-            close(connectionSocketFD); // Closing the connection to our dear client.
+            shutdown(socketFD, SHUT_WR);
+            close(socketFD);
         }
         sleep(ID_TIME_INTERVAL);
     }
-}
-int id_alreadygenerated(char *id)
-{
-    for (int i = 0; i < generatedIDNum; i++)
-    {
-        if (strcmp(id, generatedIDs[i]) == 0) // ACCESS HERE -> SEGFAULT
-        {
-            return 0;
-        }
-    }
-    return -1;
 }
 void *receiveID(void *connectionSocketFD)
 {
@@ -118,10 +85,9 @@ void *receiveID(void *connectionSocketFD)
     while ((bytesWritten = read(socketFD, idBuff, ID_BYTE_SIZE)) > 0);
     if (id_alreadygenerated(idBuff) == 0)
     {
-        printf("WARNING!\nYou've been contacted with the id %s!\n", idBuff);
+        printf("WARNING!!!\nThere's a match between your generated IDs and the received ID %s!\n", idBuff);
     }
     addnewID(&contactIDs, &contacts, idBuff);
-    contacts++;
     printf("Added a new contact to the list of contacts.\n");
     shutdown(socketFD, SHUT_WR);
     close(socketFD);
@@ -129,11 +95,12 @@ void *receiveID(void *connectionSocketFD)
 }
 void *sendcontactsIDs()
 {
-    int connectionSocketFD;
+    int socketFD;
     int threadRetVal;
+    int n;
     for (int i = 0; i < reachablePeersNum; i++)
     {
-        if ((connectionSocketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+        if ((socketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
         {
             pthread_perrorexit("Failed to open the socket", &threadRetVal);
         }
@@ -144,23 +111,24 @@ void *sendcontactsIDs()
         char addressASCII[40];
         inet_ntop(AF_INET, &peerAddress.sin_addr, addressASCII, sizeof(addressASCII));
         printf("Attempting to connect with peer at address [%s:%hu] to send our list of contacts.\n", addressASCII, PEER_PORT); 
-        if (connect(connectionSocketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
+        if (connect(socketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
         {
             for (int j = 0; j < contacts; j++)
             {
-                int n;
-                if (n = (write(connectionSocketFD, contactIDs[j], ID_BYTE_SIZE)) < 0)
+                if ((n = (write(socketFD, contactIDs[j], ID_BYTE_SIZE))) < 0)
                 {
-                    pthread_perrorexit("Failed to write to socket", &threadRetVal);
+                    printf("CMON MAN\n"); // Here we might have a fail.
+                    printf("a\nb\nc\nd\ne\nf\n");
+                    perror("Failed to write to socket");
                 }
                 printf("Sent the contact ID %s to my neighbor peer.\n", contactIDs[j]);
-                shutdown(connectionSocketFD, SHUT_WR);
-                close(connectionSocketFD);
             }
+            shutdown(socketFD, SHUT_WR);
+            close(socketFD);
         }
         else
         {
-            printf("Failed to connect with neighbor peer, it might be down.\n");
+            printf("Couldn't connect with neighbor peer (it might be down).\n");
         }
     }
 }
@@ -188,8 +156,7 @@ int main(int argc, char *argv[])
         reachablePeersNum += n;
     }
     reachablePeersNum = reachablePeersNum / sizeof(reachablePeers[0]);
-    // Filter the given array that may contain self.
-    printf("Obtained the list of peers from the discovery server.\n");
+    printf("Obtained the list of other peers (%d) from the discovery server.\n", reachablePeersNum);
     shutdown(connectionSocketFD, SHUT_WR);
     close(connectionSocketFD);
     pthread_t clientThread;
@@ -206,13 +173,13 @@ int main(int argc, char *argv[])
     const int trueValue = 1;
     if ((setsockopt(listenSocketFD, SOL_SOCKET, SO_REUSEADDR, &trueValue, sizeof(trueValue))) < 0)
     {
-        printf("Failed to set REUSE_ADDR option to socket");
+        perror("Failed to set REUSE_ADDR option to socket");
     }
-    if (bind(listenSocketFD, (struct sockaddr*)&listenAddr, sizeof(listenAddr)) < 0) // Assigns (binds) an IP address to the socket.
+    if (bind(listenSocketFD, (struct sockaddr*)&listenAddr, sizeof(listenAddr)) < 0)
     {
         perrorexit("Failed to bind to socket");
     }
-    if (listen(listenSocketFD, MAX_PEERS_SIZE) < 0) // Listen for incoming connections requests (up to a queue of 1024 before refusing).
+    if (listen(listenSocketFD, MAX_PEERS_SIZE) < 0)
     {
         perrorexit("Failed to listen to socket");
     }
@@ -233,6 +200,7 @@ int main(int argc, char *argv[])
             int n;
             while ((n = read(connectionSocketFD, serverMsg, sizeof(serverMsg))) > 0);
             pthread_t notificationReceived;
+            printf("Received a notification from the discovery server.\n");
             pthread_create(&notificationReceived, NULL, sendcontactsIDs, NULL);
             pthread_join(notificationReceived, NULL);
         }
@@ -255,4 +223,30 @@ int main(int argc, char *argv[])
         }
     }
     return 0;
+}
+
+char *addnewID(char ***buffer, int *count, char *id)
+{
+    *buffer = realloc(*buffer, ((*count) + 1) * sizeof(char*));
+    (*buffer)[*count] = malloc(ID_BYTE_SIZE);
+    strcpy((*buffer)[*count], id);
+    (*count)++;
+    return id;
+}
+char *dynamicrand_alphanumID()
+{
+    char* alphanumID = malloc(ID_BYTE_SIZE);
+    alphanumID = rand_alphanumID(alphanumID, ID_BYTE_SIZE);
+    return alphanumID;
+}
+int id_alreadygenerated(char *id)
+{
+    for (int i = 0; i < generatedIDNum; i++)
+    {
+        if (strcmp(id, generatedIDs[i]) == 0)
+        {
+            return 0;
+        }
+    }
+    return -1;
 }

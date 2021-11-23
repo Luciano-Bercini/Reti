@@ -52,12 +52,12 @@ void *sendpeerlist_toclient(void *sendpeerlist_args)
         iov[1].iov_base = &registeredClients[peerlist_args.skipElement + 1];
         iov[1].iov_len = (registeredClientsNo - (peerlist_args.skipElement + 1)) * sizeof(in_addr_t);
     }
-    else
+    else // This peer is a new peer (it wasn't contained in the list), we send everything except the last element, which is the new peer itself.
     {
         iov = malloc(sizeof(struct iovec));
         iovcount = 1;
         iov[0].iov_base = registeredClients;
-        iov[0].iov_len = registeredClientsNo * sizeof(in_addr_t);
+        iov[0].iov_len = (registeredClientsNo - 1) * sizeof(in_addr_t);
     }
     if (registeredClientsNo > 0)
     {
@@ -113,7 +113,7 @@ void *notifyclients()
             }
             else
             {
-                printf("Failed to connect with peer [%s:%hu], the peer might be down.\n", addressASCII, PEER_PORT);
+                printf("Couldn't connect with peer [%s:%hu], the peer might be down.\n", addressASCII, PEER_PORT);
             }
 
         }
@@ -130,9 +130,10 @@ int main(int argc, char *argv[])
     serverAddress.sin_addr.s_addr = htonl(INADDR_ANY); // Accept connections from any address associated to the server.
     serverAddress.sin_port = htons(DISCOVERY_PORT); // Htons is "Host to Network" (converts endianess if needed); s for short, l for long.
     int enable = 1;
-    if ((setsockopt(listenSocketFD, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int))) < 0)
+    // Allow the socket address (IP+port) to be re-used without having to wait for eventual "rogue" packets delays (1-2 mins).
+    if ((setsockopt(listenSocketFD, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int))) < 0) 
     {
-        perrorexit("Failed to set option to socket");
+        perror("Failed to set the socket option \"SO_REUSEADDR\"");
     }
     if (bind(listenSocketFD, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) < 0) // Assigns (binds) an IP address to the socket.
     {

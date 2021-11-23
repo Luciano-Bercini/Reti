@@ -1,2 +1,2 @@
 ifconfig eth0 10.0.0.3
-cd hosthome/Projects/Workspace/Reti/executable
+cd hosthome/Projects/Workspace/Reti/executables
