@@ -26,6 +26,7 @@ char **generatedIDs;
 int generatedIDNum = 0;
 char **contactIDs;
 int contacts = 0;
+
 in_addr_t reachablePeers[MAX_PEERS_SIZE];
 int reachablePeersNum = 0;
 
@@ -143,7 +144,7 @@ int main(int argc, char *argv[])
     }
     struct sockaddr_in discoveryAddress;
     discoveryAddress.sin_family = AF_INET;
-    discoveryAddress.sin_addr.s_addr = inet_addr(SERVER_ADDRESS); // Converts string address to binary data in Network Byte Order.
+    discoveryAddress.sin_addr.s_addr = inet_addr(SERVER_ADDRESS);
     discoveryAddress.sin_port = htons(DISCOVERY_PORT);
     if (connect(connectionSocketFD, (struct sockaddr*)&discoveryAddress, sizeof(discoveryAddress)) < 0)
     {
@@ -185,7 +186,7 @@ int main(int argc, char *argv[])
     }
     struct sockaddr_in clientAddress;
     pthread_t peerThreads[MAX_PEERS_SIZE];
-    char serverMsg[100];
+    char serverNotification[10];
     int i = 0;
     while (1) // Accept a connection (it may come from other peers or from and the server).
     {
@@ -198,7 +199,7 @@ int main(int argc, char *argv[])
         {
             printf("A new connection with the server has been accepted.\n");
             int n;
-            while ((n = read(connectionSocketFD, serverMsg, sizeof(serverMsg))) > 0);
+            while ((n = read(connectionSocketFD, serverNotification, sizeof(serverNotification))) > 0);
             pthread_t notificationReceived;
             printf("Received a notification from the discovery server.\n");
             pthread_create(&notificationReceived, NULL, sendcontactsIDs, NULL);
