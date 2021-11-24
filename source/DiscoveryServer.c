@@ -74,7 +74,7 @@ void *sendpeerlist_toclient(void *sendpeerlist_args)
         }
         free(iov);
     }
-    shutdown(peerlist_args.connectionSocketFD, SHUT_WR);
+    shutdown(peerlist_args.connectionSocketFD, SHUT_WR); // Assure that all data is sent and acknowledged by the receiver.
     close(peerlist_args.connectionSocketFD);
 }
 void *notifyclients()
@@ -100,15 +100,8 @@ void *notifyclients()
             inet_ntop(AF_INET, &peerAddress.sin_addr.s_addr, addressASCII, sizeof(addressASCII));
             if (connect(connectionSocketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
             {
-                /*int n;
-                if (n = (write(connectionSocketFD, notificationMsg, strlen(notificationMsg))) < 0)
-                {
-                    pthread_perrorexit("Failed to write to socket", &threadRetVal);
-                }*/
                 printf("Sent a notification to peer at address [%s:%hu].\n", addressASCII, PEER_PORT);
-                shutdown(connectionSocketFD, SHUT_WR);
                 close(connectionSocketFD);
-              
             }
             else
             {

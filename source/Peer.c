@@ -90,7 +90,6 @@ void *receiveID(void *connectionSocketFD)
     }
     addnewID(&contactIDs, &contacts, idBuff);
     printf("Added a new contact to the list of contacts.\n");
-    shutdown(socketFD, SHUT_WR);
     close(socketFD);
     pthread_exit(0);
 }
@@ -118,8 +117,6 @@ void *sendcontactsIDs()
             {
                 if ((n = (write(socketFD, contactIDs[j], ID_BYTE_SIZE))) < 0)
                 {
-                    printf("CMON MAN\n"); // Here we might have a fail.
-                    printf("a\nb\nc\nd\ne\nf\n");
                     perror("Failed to write to socket");
                 }
                 printf("Sent the contact ID %s to my neighbor peer.\n", contactIDs[j]);
