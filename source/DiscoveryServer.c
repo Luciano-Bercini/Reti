@@ -81,7 +81,6 @@ void *notifyclients()
 {
     int connectionSocketFD;
     int threadRetVal;
-    char *notificationMsg = "s";
     while (1)
     {
         pthread_mutex_lock(&registeredClientsLock);
@@ -101,12 +100,11 @@ void *notifyclients()
             inet_ntop(AF_INET, &peerAddress.sin_addr.s_addr, addressASCII, sizeof(addressASCII));
             if (connect(connectionSocketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
             {
-                sleep(10);
-                int n;
+                /*int n;
                 if (n = (write(connectionSocketFD, notificationMsg, strlen(notificationMsg))) < 0)
                 {
                     pthread_perrorexit("Failed to write to socket", &threadRetVal);
-                }
+                }*/
                 printf("Sent a notification to peer at address [%s:%hu].\n", addressASCII, PEER_PORT);
                 shutdown(connectionSocketFD, SHUT_WR);
                 close(connectionSocketFD);

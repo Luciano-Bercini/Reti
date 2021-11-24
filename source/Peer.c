@@ -198,8 +198,8 @@ int main(int argc, char *argv[])
         if (ntohl(clientAddress.sin_addr.s_addr) == ntohl(inet_addr(SERVER_ADDRESS)))
         {
             printf("A new connection with the server has been accepted.\n");
-            int n;
-            while ((n = read(connectionSocketFD, serverNotification, sizeof(serverNotification))) > 0);
+            //int n;
+            //while ((n = read(connectionSocketFD, serverNotification, sizeof(serverNotification))) > 0);
             pthread_t notificationReceived;
             printf("Received a notification from the discovery server.\n");
             pthread_create(&notificationReceived, NULL, sendcontactsIDs, NULL);
