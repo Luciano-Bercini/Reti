@@ -25,7 +25,7 @@ I peer devono comunicare direttamente tra di loro senza il tramite del server.
 */
 
 const int MAX_LISTEN_QUEUE = 4096;
-const int NOTIFY_TIME_INTERVAL = 10;
+const int NOTIFY_TIME_INTERVAL = 20;
 in_addr_t *registeredClients;
 int registeredClientsNum = 0;
 pthread_mutex_t registeredClientsLock = PTHREAD_MUTEX_INITIALIZER;
@@ -64,13 +64,19 @@ void *sendpeerlist_toclient(void *sendpeerlist_args)
             iov[0].iov_len = (registeredClientsNo - 1) * sizeof(in_addr_t);
         }
         int bytesWritten;
+        int bytesLength = (registeredClientsNo - 1) * sizeof(in_addr_t);
+        ContactsListByteLength networkByteLength = htonl((uint32_t)bytesLength);
+        if ((bytesWritten = write(peerlist_args.connectionSocketFD, &networkByteLength, sizeof(networkByteLength))) < 0)
+        {
+            perror("Failed to send the size of the list");
+        }
         if ((bytesWritten = writev(peerlist_args.connectionSocketFD, iov, iovcount)) < 0)
         {
             perror("Failed to write to socket");
         }
         else
         {
-            printf("A list with the other peers has been sent to the newly registered peer.\n");
+            printf("A list with the {%d} other peers has been sent to the newly registered peer.\n", (registeredClientsNo - 1));
         }
         free(iov);
     }
@@ -152,7 +158,7 @@ int main(int argc, char *argv[])
         // Accept a connection from the listen queue and creates a new socket to comunicate; second and third argument help identify the client.
         if ((clientSocketFD = accept(listenSocketFD, (struct sockaddr*)&clientAddress, &clientSize)) < 0)
         {
-            perror("Failed to accept a connection with the client");
+            perror("Failed to accept a connection");
             continue;
         }
         char *addrASCII = inet_ntoa(clientAddress.sin_addr);
