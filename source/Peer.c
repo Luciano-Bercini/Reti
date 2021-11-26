@@ -23,6 +23,9 @@ Un peer che riceve una lista di contatti verifica se è presente un proprio id e
 I peer devono comunicare direttamente tra di loro senza il tramite del server.
 */
 
+
+const int MAX_LISTEN_QUEUE = 4096;
+
 char **generatedIDs;
 int generatedIDNum = 0;
 char **receivedIDs;
@@ -91,12 +94,12 @@ int main(int argc, char *argv[])
     {
         perrorexit("Failed to bind to socket");
     }
-    if (listen(listenSocketFD, MAX_PEERS_SIZE) < 0)
+    if (listen(listenSocketFD, MAX_LISTEN_QUEUE) < 0)
     {
         perrorexit("Failed to listen to socket");
     }
     struct sockaddr_in clientAddress;
-    pthread_t peerThreads[MAX_PEERS_SIZE];
+    pthread_t peerThreads[MAX_LISTEN_QUEUE];
     int i = 0;
     while (1) // Accept a connection (it may come from other peers or from and the server).
     {
@@ -108,10 +111,15 @@ int main(int argc, char *argv[])
         in_addr_t clientAddr = ntohl(clientAddress.sin_addr.s_addr);
         if (clientAddr == ntohl(inet_addr(SERVER_ADDRESS)))
         {
-            pthread_t notificationReceived;
-            printf("Received a notification from the discovery server.\n");
-            pthread_create(&notificationReceived, NULL, sendcontactsIDs, NULL);
-            pthread_join(notificationReceived, NULL);
+            char server_notification[NOTIFICATION_BYTES];
+            readNBytes(connectionSocketFD, server_notification, NOTIFICATION_BYTES);
+            if (strcmp(server_notification, NOTIFICATION_SEND_LIST) == 0)
+            {
+                pthread_t notificationReceived;
+                printf("Received the notification from the server, sending our list of contacts.\n");
+                pthread_create(&notificationReceived, NULL, sendcontactsIDs, NULL);
+                pthread_join(notificationReceived, NULL);
+            }
         }
         else
         {
@@ -128,9 +136,9 @@ int main(int argc, char *argv[])
                 printf("Failed to create the thread \"receiveID\".\n");
             }
             i++;
-            if (i >= MAX_PEERS_SIZE)
+            if (i >= MAX_LISTEN_QUEUE)
             {
-                for (int j = 0; j < MAX_PEERS_SIZE; j++)
+                for (int j = 0; j < MAX_LISTEN_QUEUE; j++)
                 {
                     pthread_join(peerThreads[j], NULL);
                 }
@@ -180,6 +188,7 @@ void *send_newID_repeating()
             close(socketFD);
             sleep(ID_TIME_INTERVAL);
         }
+        sleep(ID_TIME_INTERVAL); // Further wait before generating a new ID.
     }
 }
 void *receiveID(void *fd)

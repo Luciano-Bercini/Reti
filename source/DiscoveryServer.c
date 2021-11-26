@@ -106,6 +106,11 @@ void *notifyclients()
             inet_ntop(AF_INET, &peerAddress.sin_addr.s_addr, addressASCII, sizeof(addressASCII));
             if (connect(connectionSocketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
             {
+                int bytesWritten = 0;
+                if ((bytesWritten = write(connectionSocketFD, &NOTIFICATION_SEND_LIST, NOTIFICATION_BYTES)) < 0)
+                {
+                    perror("Failed to send the size of the list");
+                }
                 printf("Sent a notification to peer at address [%s:%hu].\n", addressASCII, PEER_PORT);
                 close(connectionSocketFD);
             }
