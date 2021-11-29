@@ -41,31 +41,9 @@ struct sendpeerlist_args
 
 int main(int argc, char *argv[])
 {
-    int listenSocketFD;
     int clientSocketFD;
-    struct sockaddr_in serverAddress;
-    if ((listenSocketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0) // Domain (family), type, and protocol (Internet, TCP, protocol [0 is default]).
-    {
-        perrorexit("Failed to open the socket");
-    }
-    serverAddress.sin_family = AF_INET;
-    serverAddress.sin_addr.s_addr = htonl(INADDR_ANY); // Accepts connections from any IP address associated to the machine (through its interfaces).
-    serverAddress.sin_port = htons(DISCOVERY_PORT); // Htons is "Host to Network" (converts endianess if needed); s for short, l for long.
-    int enable = 1;
-    // Allow the socket address (IP+port) to be re-used without having to wait for eventual "rogue" packets delays (1-2 mins).
-    if ((setsockopt(listenSocketFD, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int))) < 0) 
-    {
-        perror("Failed to set the socket option \"SO_REUSEADDR\"");
-    }
-    if (bind(listenSocketFD, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) < 0) // Assigns (binds) an IP address to the socket.
-    {
-        perrorexit("Failed to bind the socket");
-    }
-    if (listen(listenSocketFD, MAX_LISTEN_QUEUE) < 0) // Listen for incoming connections requests (up to a queue of X before refusing).
-    {
-        perrorexit("Failed to listen");
-    }
     pthread_t notificationThread;
+    int listen_socket_fd = create_listen_socket(DISCOVERY_PORT, MAX_LISTEN_QUEUE);
     if (pthread_create(&notificationThread, NULL, notify_clients, NULL) != 0)
     {
         printf("Failed to create the notification thread!\n");
@@ -80,7 +58,7 @@ int main(int argc, char *argv[])
     {
         socklen_t clientSize = sizeof(clientAddress);
         // Accept a connection from the listen queue and creates a new socket to comunicate; second and third argument help identify the client.
-        if ((clientSocketFD = accept(listenSocketFD, (struct sockaddr*)&clientAddress, &clientSize)) < 0)
+        if ((clientSocketFD = accept(listen_socket_fd, (struct sockaddr*)&clientAddress, &clientSize)) < 0)
         {
             perror("Failed to accept a connection");
             continue;
@@ -179,7 +157,7 @@ void *notify_clients()
         {
             if ((connectionSocketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
             {
-                pthread_perrorexit("Failed to open the socket", &threadRetVal);
+                pthread_perror_exit("Failed to open the socket", &threadRetVal);
             }
             struct sockaddr_in peerAddress;
             peerAddress.sin_family = AF_INET;

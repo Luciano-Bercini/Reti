@@ -7,6 +7,8 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <time.h>
+#include <poll.h>
+#include <sys/ioctl.h>
 #include <errno.h>
 #include <pthread.h>
 #include "Wrapper.h"
@@ -49,6 +51,20 @@ void *send_newID_repeating();
 void *receive_id(void *socketFD);
 void *manage_server_notifications();
 
+void receive_id_TEST(int fd)
+{
+    int bytesWritten;
+    char idBuff[ID_BYTE_SIZE];
+    while ((bytesWritten = read(fd, idBuff, ID_BYTE_SIZE)) > 0);
+    if (is_id_generated(idBuff) == 0)
+    {
+        printf("WARNING!!!\nThere's a match between your generated IDs and the received ID: \"%.5s...\"\n", idBuff);
+    }
+    add_new_id(&receivedIDs, &receivedIDNum, idBuff);
+    close(fd);
+    //pthread_exit(0);
+}
+
 int main(int argc, char *argv[])
 {
     signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to handle errors directly.
@@ -57,42 +73,120 @@ int main(int argc, char *argv[])
     pthread_t peerThread;
     if (pthread_create(&peerThread, NULL, send_newID_repeating, NULL) != 0)
     {
-        printf("Failed to create the new thread\n");
+        printf("Failed to create the thread for sending IDs.\n");
     }
     pthread_t serverThread;
     if (pthread_create(&serverThread, NULL, manage_server_notifications, NULL) != 0)
     {
-        printf("Failed to create the new thread\n");
+        printf("Failed to create the new thread for managing server notifications.\n");
     }
-    int listenSocketFD;
-    struct sockaddr_in listenAddr;
-    listenSocketFD = socket(AF_INET, SOCK_STREAM, 0);
-    listenAddr.sin_family = AF_INET;
-    listenAddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    listenAddr.sin_port = htons(P2P_LISTEN_PORT);
-    const int trueValue = 1;
-    if ((setsockopt(listenSocketFD, SOL_SOCKET, SO_REUSEADDR, &trueValue, sizeof(trueValue))) < 0)
-    {
-        perror("Failed to set REUSE_ADDR option to socket");
-    }
-    if (bind(listenSocketFD, (struct sockaddr*)&listenAddr, sizeof(listenAddr)) < 0)
-    {
-        perrorexit("Failed to bind to socket");
-    }
-    if (listen(listenSocketFD, MAX_LISTEN_QUEUE) < 0)
-    {
-        perrorexit("Failed to listen to socket");
-    }
+    int listen_socket_fd = create_listen_socket(P2P_LISTEN_PORT, MAX_LISTEN_QUEUE);
     int socketFD;
     struct sockaddr_in clientAddress;
     pthread_t peerThreads[MAX_LISTEN_QUEUE];
+    
+    /*struct pollfd poll_fds[MAX_LISTEN_QUEUE];
+    for (int i = 1; i < MAX_LISTEN_QUEUE; i++)
+    {
+        poll_fds[i].fd = -1; // Should be ignored for now.
+    }
+    poll_fds[0].fd = listen_socket_fd;
+    poll_fds[0].events = POLLIN; // Cares about read events (ready to read).
+    while (1)
+    {
+        if (poll(poll_fds, MAX_LISTEN_QUEUE, -1) < 0)
+        {
+            perror_exit("Poll failed");
+        }
+        for (int i = 0; i < MAX_LISTEN_QUEUE; i++)
+        {
+            if (poll_fds[i].revents & POLLIN)
+            {
+                if (poll_fds[i].fd == listen_socket_fd)
+                {
+                    socklen_t clientSize = sizeof(clientAddress);
+                    if ((socketFD = accept(listen_socket_fd, (struct sockaddr*)&clientAddress, &clientSize)) < 0)
+                    {
+                        perror_exit("Failed to accept connection");
+                    }
+                    in_addr_t clientAddr = ntohl(clientAddress.sin_addr.s_addr);
+                    int n;
+                    if ((n = is_peer_in_contacts(clientAddr)) < 0)
+                    {
+                        printf("Received a contact from a stranger, adding it to our list of contacts.\n");
+                        pthread_mutex_lock(&contactsLock);
+                        add_new_contact(clientAddr);
+                        pthread_mutex_unlock(&contactsLock);
+                    }
+                    poll_fds[i+1].fd = socketFD;
+                    poll_fds[i+1].events = POLLIN;
+                }
+            }
+            else
+            {
+                receive_id_TEST(poll_fds[i].fd);
+                poll_fds[i].fd = -1; // By negating we say it should be ignored.
+            }
+        }
+
+    }
+    */
+    
+    fd_set active_fds;
+    fd_set read_fds;
+    FD_ZERO(&active_fds); // Initialize to 0 all the bits of the bit field.
+    FD_SET(listen_socket_fd, &active_fds); // Adds the listen socket to the set.
+    int max_fd = listen_socket_fd;
+    while (1)
+    {
+        read_fds = active_fds; // This is needed as select() will rewrite the bit field.
+        if (select(max_fd + 1, &read_fds, NULL, NULL, NULL) < 0) 
+        {
+            perror_exit("Failed to select");
+        }
+        for (int i = 0; i <= max_fd; i++)
+        {
+            if (FD_ISSET(i, &read_fds))
+            {
+                if (i == listen_socket_fd) // There is a new connection we can accept!
+                {
+                    socklen_t clientSize = sizeof(clientAddress);
+                    if ((socketFD = accept(listen_socket_fd, (struct sockaddr*)&clientAddress, &clientSize)) < 0)
+                    {
+                        perror_exit("Failed to accept connection");
+                    }
+                    in_addr_t clientAddr = ntohl(clientAddress.sin_addr.s_addr);
+                    int n;
+                    if ((n = is_peer_in_contacts(clientAddr)) < 0)
+                    {
+                        printf("Received a contact from a stranger, adding it to our list of contacts.\n");
+                        pthread_mutex_lock(&contactsLock);
+                        add_new_contact(clientAddr);
+                        pthread_mutex_unlock(&contactsLock);
+                    }
+                    FD_SET(socketFD, &active_fds);
+                    if (socketFD > max_fd)
+                    {
+                        max_fd = socketFD;
+                    }
+                }
+                else
+                {
+                    receive_id_TEST(i);
+                    FD_CLR(i, &active_fds);
+                }
+            }
+        }
+    }
+    
+    /*
     int i = 0;
     while (1)
     {
         socklen_t clientSize = sizeof(clientAddress);
-        if ((socketFD = accept(listenSocketFD, (struct sockaddr*)&clientAddress, &clientSize)) < 0)
+        if ((socketFD = accept(listen_socket_fd, (struct sockaddr*)&clientAddress, &clientSize)) < 0)
         {
-            perrorexit("Failed to accept connection");
+            perror_exit("Failed to accept connection");
         }
         in_addr_t clientAddr = ntohl(clientAddress.sin_addr.s_addr);
         int n;
@@ -117,6 +211,7 @@ int main(int argc, char *argv[])
             i = 0;
         }
     }
+    */
     return 0;
 }
 void obtain_discovery_contacts()
@@ -124,7 +219,7 @@ void obtain_discovery_contacts()
     int connectionSocketFD;
     if ((connectionSocketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
-        perrorexit("Failed to open the socket");
+        perror_exit("Failed to open the socket");
     }
     struct sockaddr_in discoveryAddress;
     discoveryAddress.sin_family = AF_INET;
@@ -132,7 +227,7 @@ void obtain_discovery_contacts()
     discoveryAddress.sin_port = htons(DISCOVERY_PORT);
     if (connect(connectionSocketFD, (struct sockaddr*)&discoveryAddress, sizeof(discoveryAddress)) < 0)
     {
-        perrorexit("Failed to connect with the discovery server");
+        perror_exit("Failed to connect with the discovery server");
     }
     ContactsListByteLength contactListBytes;
     read_NBytes(connectionSocketFD, &contactListBytes, sizeof(contactListBytes)); // Reading the size of the message.
@@ -158,7 +253,7 @@ void *send_newID_repeating()
         {
             if ((socketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
             {
-                pthread_perrorexit("Failed to open the socket", &threadExit);
+                pthread_perror_exit("Failed to open the socket", &threadExit);
             }
             struct sockaddr_in peerAddress;
             peerAddress.sin_family = AF_INET;
@@ -171,7 +266,7 @@ void *send_newID_repeating()
                 int n;
                 if (n = (write(socketFD, alphanumID, ID_BYTE_SIZE)) < 0)
                 {
-                    pthread_perrorexit("Failed to write to socket", &threadExit);
+                    pthread_perror_exit("Failed to write to socket", &threadExit);
                 }
                 printf("Sent the ID \"%.5s...\" to the peer at address [%s:%hu].\n", alphanumID, addressASCII, P2P_LISTEN_PORT);
             }
@@ -198,39 +293,17 @@ void *receive_id(void *fd)
     }
     add_new_id(&receivedIDs, &receivedIDNum, idBuff);
     close(socketFD);
-    pthread_exit(0);
+    //pthread_exit(0);
 }
 void *manage_server_notifications()
 {
     int socketFD;
-    int listenSocketFD;
-    if ((listenSocketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-    {
-        perrorexit("Failed to open the socket");
-    }
-    struct sockaddr_in listenAddr;
-    listenSocketFD = socket(AF_INET, SOCK_STREAM, 0);
-    listenAddr.sin_family = AF_INET;
-    listenAddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    listenAddr.sin_port = htons(PEER_DISCOVERY_LISTEN_PORT);
-    const int trueValue = 1;
-    if ((setsockopt(listenSocketFD, SOL_SOCKET, SO_REUSEADDR, &trueValue, sizeof(trueValue))) < 0)
-    {
-        perror("Failed to set REUSE_ADDR option to socket");
-    }
-    if (bind(listenSocketFD, (struct sockaddr*)&listenAddr, sizeof(listenAddr)) < 0)
-    {
-        perrorexit("Failed to bind to socket");
-    }
-    if (listen(listenSocketFD, MAX_LISTEN_QUEUE) < 0)
-    {
-        perrorexit("Failed to listen to socket");
-    }
+    int listen_socket_fd = create_listen_socket(PEER_DISCOVERY_LISTEN_PORT, MAX_LISTEN_QUEUE);
     struct sockaddr_in serverAddress;
     while (1)
     {
         socklen_t serverSize = sizeof(serverAddress);
-        if ((socketFD = accept(listenSocketFD, (struct sockaddr*)&serverAddress, &serverSize)) < 0)
+        if ((socketFD = accept(listen_socket_fd, (struct sockaddr*)&serverAddress, &serverSize)) < 0)
         {
             perror("Failed to accept connection");
         }
@@ -250,7 +323,7 @@ void *manage_server_notifications()
             {
                 if ((socketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
                 {
-                    pthread_perrorexit("Failed to open the socket", &threadRetVal);
+                    pthread_perror_exit("Failed to open the socket", &threadRetVal);
                 }
                 struct sockaddr_in peerAddress;
                 peerAddress.sin_family = AF_INET;

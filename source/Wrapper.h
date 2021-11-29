@@ -11,6 +11,7 @@
 // Defines a 32 bit unsigned integer to handle the exchange of the contact list between the discovery server and the clients.
 typedef unsigned int ContactsListByteLength;
 
-void perrorexit(const char *s);
-void pthread_perrorexit(const char *s, int *retVal);
+void perror_exit(const char *s);
+void pthread_perror_exit(const char *s, int *retVal);
+int create_listen_socket(in_port_t port, int max_listen_queue);
 #endif
