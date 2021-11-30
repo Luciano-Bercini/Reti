@@ -43,3 +43,45 @@ int create_listen_socket(in_port_t port, int max_listen_queue)
     }
     return listenSocketFD;
 }
+ssize_t read_NBytes(int fd, void *buff, size_t bytesToRead)
+{
+    int n;
+    size_t bytesRead = 0;
+    while (bytesRead < bytesToRead)
+    {
+        n = read(fd, buff, bytesToRead);
+        if (n == 0)
+        {
+            printf("Failed to read everything: we read less bytes than expected.\n");
+            break;
+        }
+        if (n == -1)
+        {
+            perror("Failed to read");
+            return -1;
+        }
+        bytesRead += n;
+    }
+    return bytesRead;
+}
+ssize_t write_NBytes(int fd, void *buff, size_t bytesToWrite)
+{
+    int n;
+    size_t bytesWritten = 0;
+    while (bytesWritten < bytesToWrite)
+    {
+        n = write(fd, buff, bytesToWrite);
+        if (n == 0)
+        {
+            printf("Failed to write everything: we write less bytes than expected.\n");
+            break;
+        }
+        if (n == -1)
+        {
+            perror("Failed to write");
+            return -1;
+        }
+        bytesWritten += n;
+    }
+    return bytesWritten;
+}

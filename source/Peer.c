@@ -44,26 +44,11 @@ char *get_dynamicrand_alphanumID();
 int is_id_generated(char *id);
 int is_peer_in_contacts(in_addr_t peer);
 void add_new_contact(in_addr_t peer);
-void read_NBytes(int fd, void *buff, size_t bytesToRead);
 
 void obtain_discovery_contacts();
 void *send_newID_repeating();
-void *receive_id(void *socketFD);
+void receive_id(int socketFD);
 void *manage_server_notifications();
-
-void receive_id_TEST(int fd)
-{
-    int bytesWritten;
-    char idBuff[ID_BYTE_SIZE];
-    while ((bytesWritten = read(fd, idBuff, ID_BYTE_SIZE)) > 0);
-    if (is_id_generated(idBuff) == 0)
-    {
-        printf("WARNING!!!\nThere's a match between your generated IDs and the received ID: \"%.5s...\"\n", idBuff);
-    }
-    add_new_id(&receivedIDs, &receivedIDNum, idBuff);
-    close(fd);
-    //pthread_exit(0);
-}
 
 int main(int argc, char *argv[])
 {
@@ -83,55 +68,6 @@ int main(int argc, char *argv[])
     int listen_socket_fd = create_listen_socket(P2P_LISTEN_PORT, MAX_LISTEN_QUEUE);
     int socketFD;
     struct sockaddr_in clientAddress;
-    pthread_t peerThreads[MAX_LISTEN_QUEUE];
-    
-    /*struct pollfd poll_fds[MAX_LISTEN_QUEUE];
-    for (int i = 1; i < MAX_LISTEN_QUEUE; i++)
-    {
-        poll_fds[i].fd = -1; // Should be ignored for now.
-    }
-    poll_fds[0].fd = listen_socket_fd;
-    poll_fds[0].events = POLLIN; // Cares about read events (ready to read).
-    while (1)
-    {
-        if (poll(poll_fds, MAX_LISTEN_QUEUE, -1) < 0)
-        {
-            perror_exit("Poll failed");
-        }
-        for (int i = 0; i < MAX_LISTEN_QUEUE; i++)
-        {
-            if (poll_fds[i].revents & POLLIN)
-            {
-                if (poll_fds[i].fd == listen_socket_fd)
-                {
-                    socklen_t clientSize = sizeof(clientAddress);
-                    if ((socketFD = accept(listen_socket_fd, (struct sockaddr*)&clientAddress, &clientSize)) < 0)
-                    {
-                        perror_exit("Failed to accept connection");
-                    }
-                    in_addr_t clientAddr = ntohl(clientAddress.sin_addr.s_addr);
-                    int n;
-                    if ((n = is_peer_in_contacts(clientAddr)) < 0)
-                    {
-                        printf("Received a contact from a stranger, adding it to our list of contacts.\n");
-                        pthread_mutex_lock(&contactsLock);
-                        add_new_contact(clientAddr);
-                        pthread_mutex_unlock(&contactsLock);
-                    }
-                    poll_fds[i+1].fd = socketFD;
-                    poll_fds[i+1].events = POLLIN;
-                }
-            }
-            else
-            {
-                receive_id_TEST(poll_fds[i].fd);
-                poll_fds[i].fd = -1; // By negating we say it should be ignored.
-            }
-        }
-
-    }
-    */
-    
     fd_set active_fds;
     fd_set read_fds;
     FD_ZERO(&active_fds); // Initialize to 0 all the bits of the bit field.
@@ -170,15 +106,22 @@ int main(int argc, char *argv[])
                         max_fd = socketFD;
                     }
                 }
-                else
+                else // Ready to read!
                 {
-                    receive_id_TEST(i);
+                    MessageByteLength messageByteLength;
+                    read_NBytes(i, &messageByteLength, sizeof(messageByteLength));
+                    messageByteLength = ntohl(messageByteLength);
+                    int num_of_ids = messageByteLength / sizeof(ID_BYTE_SIZE);
+                    for (int j = 0; j < num_of_ids; j++)
+                    {
+                        receive_id(i);
+                    }
+                    close(i);
                     FD_CLR(i, &active_fds);
                 }
             }
         }
     }
-    
     /*
     int i = 0;
     while (1)
@@ -229,7 +172,7 @@ void obtain_discovery_contacts()
     {
         perror_exit("Failed to connect with the discovery server");
     }
-    ContactsListByteLength contactListBytes;
+    MessageByteLength contactListBytes;
     read_NBytes(connectionSocketFD, &contactListBytes, sizeof(contactListBytes)); // Reading the size of the message.
     contactListBytes = ntohl((uint32_t)contactListBytes);
     contactPeers = malloc(contactListBytes);
@@ -263,8 +206,12 @@ void *send_newID_repeating()
             inet_ntop(AF_INET, &peerAddress.sin_addr, addressASCII, sizeof(addressASCII));
             if (connect(socketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
             {
-                int n;
-                if (n = (write(socketFD, alphanumID, ID_BYTE_SIZE)) < 0)
+                MessageByteLength messageByteLength = htonl(sizeof(ID_BYTE_SIZE));
+                if (write_NBytes(socketFD, &messageByteLength, sizeof(messageByteLength)) < 0)
+                {
+                    pthread_perror_exit("Failed to write to socket", &threadExit);
+                }
+                if (write_NBytes(socketFD, alphanumID, ID_BYTE_SIZE) < 0)
                 {
                     pthread_perror_exit("Failed to write to socket", &threadExit);
                 }
@@ -274,26 +221,22 @@ void *send_newID_repeating()
             {
                 printf("Couldn't connect with neighbor peer: %s.\n", strerror(errno));
             }
-            shutdown(socketFD, SHUT_WR);
             close(socketFD);
-            sleep(ID_TIME_INTERVAL);
+            //sleep(ID_TIME_INTERVAL);
         }
         sleep(ID_TIME_INTERVAL); // Further wait before generating a new ID.
     }
 }
-void *receive_id(void *fd)
+void receive_id(int fd)
 {
-    int socketFD = *((int*)fd);
     int bytesWritten;
     char idBuff[ID_BYTE_SIZE];
-    while ((bytesWritten = read(socketFD, idBuff, ID_BYTE_SIZE)) > 0);
+    read_NBytes(fd, idBuff, ID_BYTE_SIZE);
     if (is_id_generated(idBuff) == 0)
     {
         printf("WARNING!!!\nThere's a match between your generated IDs and the received ID: \"%.5s...\"\n", idBuff);
     }
     add_new_id(&receivedIDs, &receivedIDNum, idBuff);
-    close(socketFD);
-    //pthread_exit(0);
 }
 void *manage_server_notifications()
 {
@@ -311,7 +254,6 @@ void *manage_server_notifications()
         read_NBytes(socketFD, server_notification, NOTIFICATION_BYTES);
         if (strcmp(server_notification, NOTIFICATION_SEND_LIST) == 0)
         {
-            pthread_t notificationReceived;
             printf("Received the notification from the server, sending our list of contacts.\n");
             pthread_mutex_lock(&contactsLock);
             int contactsNum = contactPeersNum;
@@ -333,21 +275,20 @@ void *manage_server_notifications()
                 inet_ntop(AF_INET, &peerAddress.sin_addr, addressASCII, sizeof(addressASCII));
                 if (connect(socketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
                 {
+                    // Receive ID is suspect, perhaps a conflict?
+                    MessageByteLength messageByteLength = htonl(receivedIDNum * sizeof(ID_BYTE_SIZE));
+                    write_NBytes(socketFD, &messageByteLength, sizeof(messageByteLength));
                     for (int j = 0; j < receivedIDNum; j++)
                     {
-                        if ((n = (write(socketFD, receivedIDs[j], ID_BYTE_SIZE))) < 0)
-                        {
-                            perror("Failed to write to socket");
-                        }
+                        write_NBytes(socketFD, receivedIDs[j], ID_BYTE_SIZE);
                     }
                     printf("Sent our list of contacts to the peer at address [%s:%hu].\n", addressASCII, P2P_LISTEN_PORT); 
-                    shutdown(socketFD, SHUT_WR);
-                    close(socketFD);
                 }
                 else
                 {
                     printf("Couldn't connect with neighbor peer: %s.\n", strerror(errno));
                 }
+                close(socketFD);
             }
         }
     }
@@ -394,22 +335,4 @@ int is_id_generated(char *id)
         }
     }
     return -1;
-}
-void read_NBytes(int fd, void *buff, size_t bytesToRead)
-{
-    int n;
-    int bytesRead = 0;
-    while (bytesRead < bytesToRead)
-    {
-        n = read(fd, buff, bytesToRead);
-        if (n < 0)
-        {
-            perror("Failed to read");
-        }
-        if (n == 0)
-        {
-            printf("Failed to read everything: we read less bytes than expected.\n");
-        }
-        bytesRead += n;
-    }
 }

@@ -25,7 +25,7 @@ I peer devono comunicare direttamente tra di loro senza il tramite del server.
 */
 
 const int MAX_LISTEN_QUEUE = 4096;
-const int NOTIFY_TIME_INTERVAL = 20;
+const int NOTIFY_TIME_INTERVAL = 15;
 in_addr_t *registeredClients;
 int registeredClientsNum = 0;
 pthread_mutex_t registeredClientsLock = PTHREAD_MUTEX_INITIALIZER;
@@ -127,21 +127,23 @@ void *send_peer_list(void *sendpeerlist_args)
         int bytesWritten;
         int bytesLength = (registeredClientsNo - 1) * sizeof(in_addr_t);
         ContactsListByteLength networkByteLength = htonl((uint32_t)bytesLength);
-        if ((bytesWritten = write(peerlist_args.connectionSocketFD, &networkByteLength, sizeof(networkByteLength))) < 0)
+        if (write_NBytes(peerlist_args.connectionSocketFD, &networkByteLength, sizeof(networkByteLength)) == sizeof(networkByteLength))
         {
-            perror("Failed to send the size of the list");
-        }
-        if ((bytesWritten = writev(peerlist_args.connectionSocketFD, iov, iovcount)) < 0)
-        {
-            perror("Failed to write to socket");
+            if ((bytesWritten = writev(peerlist_args.connectionSocketFD, iov, iovcount)) < 0)
+            {
+                perror("Failed to write to socket");
+            }
+            else
+            {
+                printf("A list with the {%d} other peers has been sent to the newly registered peer.\n", (registeredClientsNo - 1));
+            }
         }
         else
         {
-            printf("A list with the {%d} other peers has been sent to the newly registered peer.\n", (registeredClientsNo - 1));
+            perror("Failed to write the size of the peer list");
         }
         free(iov);
     }
-    shutdown(peerlist_args.connectionSocketFD, SHUT_WR); // Assure that all data is sent and acknowledged by the receiver.
     close(peerlist_args.connectionSocketFD);
 }
 void *notify_clients()
@@ -167,18 +169,14 @@ void *notify_clients()
             inet_ntop(AF_INET, &peerAddress.sin_addr.s_addr, addressASCII, sizeof(addressASCII));
             if (connect(connectionSocketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
             {
-                int bytesWritten = 0;
-                if ((bytesWritten = write(connectionSocketFD, &NOTIFICATION_SEND_LIST, NOTIFICATION_BYTES)) < 0)
-                {
-                    perror("Failed to send the size of the list");
-                }
+                write_NBytes(connectionSocketFD, &NOTIFICATION_SEND_LIST, NOTIFICATION_BYTES);
                 printf("Sent a notification to peer at address [%s:%hu].\n", addressASCII, PEER_DISCOVERY_LISTEN_PORT);
-                close(connectionSocketFD);
             }
             else
             {
                 printf("Couldn't connect with peer [%s:%hu]: %s.\n", addressASCII, PEER_DISCOVERY_LISTEN_PORT, strerror(errno));
             }
+            close(connectionSocketFD);
         }
         sleep(NOTIFY_TIME_INTERVAL);
     }
