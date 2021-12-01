@@ -25,33 +25,38 @@ Un peer che riceve una lista di contatti verifica se è presente un proprio id e
 I peer devono comunicare direttamente tra di loro senza il tramite del server.
 */
 
-const int MAX_LISTEN_QUEUE = 4096;
-
-char **generatedIDs;
-int generatedIDNum = 0;
-char **receivedIDs;
-int receivedIDNum = 0;
-
-in_addr_t *contactPeers;
-int contactPeersNum = 0;
-pthread_mutex_t contactsLock = PTHREAD_MUTEX_INITIALIZER;
-
 const int ID_BYTE_SIZE = 64;
-const int ID_TIME_INTERVAL = 5;
+const int MAX_LISTEN_QUEUE = 4096;
+int send_id_time_interval;
+char **generated_ids;
+int generated_id_num;
+char **received_ids;
+int received_id_num;
+pthread_mutex_t received_id_lock = PTHREAD_MUTEX_INITIALIZER;
+in_addr_t *contact_peers;
+int contact_peers_num;
+pthread_mutex_t contacts_lock = PTHREAD_MUTEX_INITIALIZER;
 
 char *add_new_id(char ***buffer, int *count, char *id);
 char *get_dynamicrand_alphanumID(); 
 int is_id_generated(char *id);
 int is_peer_in_contacts(in_addr_t peer);
 void add_new_contact(in_addr_t peer);
-
 void obtain_discovery_contacts();
 void *send_newID_repeating();
-void receive_id(int socketFD);
 void *manage_server_notifications();
+void receive_ids(int fd, int num_of_ids);
+int check_id_generated(char received_ids[][ID_BYTE_SIZE], int num_of_ids);
+//int check_id_generated(char *received_ids, int num_of_ids);
 
 int main(int argc, char *argv[])
 {
+    if (argc != 2)
+    {
+        printf("You must pass a value for the send id time interval.\n");
+        exit(1);
+    }
+    send_id_time_interval = atoi(argv[1]);
     signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to handle errors directly.
     srand(time(NULL));
     obtain_discovery_contacts();
@@ -96,9 +101,9 @@ int main(int argc, char *argv[])
                     if ((n = is_peer_in_contacts(clientAddr)) < 0)
                     {
                         printf("Received a contact from a stranger, adding it to our list of contacts.\n");
-                        pthread_mutex_lock(&contactsLock);
+                        pthread_mutex_lock(&contacts_lock);
                         add_new_contact(clientAddr);
-                        pthread_mutex_unlock(&contactsLock);
+                        pthread_mutex_unlock(&contacts_lock);
                     }
                     FD_SET(socketFD, &active_fds);
                     if (socketFD > max_fd)
@@ -108,53 +113,17 @@ int main(int argc, char *argv[])
                 }
                 else // Ready to read!
                 {
-                    MessageByteLength messageByteLength;
-                    read_NBytes(i, &messageByteLength, sizeof(messageByteLength));
-                    messageByteLength = ntohl(messageByteLength);
-                    int num_of_ids = messageByteLength / sizeof(ID_BYTE_SIZE);
-                    for (int j = 0; j < num_of_ids; j++)
-                    {
-                        receive_id(i);
-                    }
+                    MessageByteLength message_byte_length;
+                    read_NBytes(i, &message_byte_length, sizeof(message_byte_length));
+                    message_byte_length = ntohl(message_byte_length);
+                    int num_of_ids = message_byte_length / ID_BYTE_SIZE;
+                    receive_ids(i, num_of_ids);
                     close(i);
                     FD_CLR(i, &active_fds);
                 }
             }
         }
     }
-    /*
-    int i = 0;
-    while (1)
-    {
-        socklen_t clientSize = sizeof(clientAddress);
-        if ((socketFD = accept(listen_socket_fd, (struct sockaddr*)&clientAddress, &clientSize)) < 0)
-        {
-            perror_exit("Failed to accept connection");
-        }
-        in_addr_t clientAddr = ntohl(clientAddress.sin_addr.s_addr);
-        int n;
-        if ((n = is_peer_in_contacts(clientAddr)) < 0)
-        {
-            printf("Received a contact from a stranger, adding it to our list of contacts.\n");
-            pthread_mutex_lock(&contactsLock);
-            add_new_contact(clientAddr);
-            pthread_mutex_unlock(&contactsLock);
-        }
-        if (pthread_create(&peerThreads[i], NULL, receive_id, (void*)&socketFD) != 0)
-        {
-            printf("Failed to create the thread \"receiveID\".\n");
-        }
-        i++;
-        if (i >= MAX_LISTEN_QUEUE)
-        {
-            for (int j = 0; j < MAX_LISTEN_QUEUE; j++)
-            {
-                pthread_join(peerThreads[j], NULL);
-            }
-            i = 0;
-        }
-    }
-    */
     return 0;
 }
 void obtain_discovery_contacts()
@@ -175,10 +144,10 @@ void obtain_discovery_contacts()
     MessageByteLength contactListBytes;
     read_NBytes(connectionSocketFD, &contactListBytes, sizeof(contactListBytes)); // Reading the size of the message.
     contactListBytes = ntohl((uint32_t)contactListBytes);
-    contactPeers = malloc(contactListBytes);
-    read_NBytes(connectionSocketFD, contactPeers, contactListBytes); // Reading the list of contacts.
-    contactPeersNum = contactListBytes / sizeof(in_addr_t);
-    printf("Obtained the list of other peers (%d) from the discovery server.\n", contactPeersNum);
+    contact_peers = malloc(contactListBytes);
+    read_NBytes(connectionSocketFD, contact_peers, contactListBytes); // Reading the list of contacts.
+    contact_peers_num = contactListBytes / sizeof(in_addr_t);
+    printf("Obtained the list of other peers (%d) from the discovery server.\n", contact_peers_num);
     close(connectionSocketFD);
 }
 void *send_newID_repeating()
@@ -187,11 +156,11 @@ void *send_newID_repeating()
     int threadExit;
     while (1)
     {
-        pthread_mutex_lock(&contactsLock);
-        int contactsNum = contactPeersNum;
-        pthread_mutex_unlock(&contactsLock);
+        pthread_mutex_lock(&contacts_lock);
+        int contactsNum = contact_peers_num;
+        pthread_mutex_unlock(&contacts_lock);
         char *alphanumID = get_dynamicrand_alphanumID();
-        add_new_id(&generatedIDs, &generatedIDNum, alphanumID);
+        add_new_id(&generated_ids, &generated_id_num, alphanumID);
         for (int i = 0; i < contactsNum; i++)
         {
             if ((socketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
@@ -200,13 +169,13 @@ void *send_newID_repeating()
             }
             struct sockaddr_in peerAddress;
             peerAddress.sin_family = AF_INET;
-            peerAddress.sin_addr.s_addr = htonl(contactPeers[i]);
+            peerAddress.sin_addr.s_addr = htonl(contact_peers[i]);
             peerAddress.sin_port = htons(P2P_LISTEN_PORT);
             char addressASCII[40];
             inet_ntop(AF_INET, &peerAddress.sin_addr, addressASCII, sizeof(addressASCII));
             if (connect(socketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
             {
-                MessageByteLength messageByteLength = htonl(sizeof(ID_BYTE_SIZE));
+                MessageByteLength messageByteLength = htonl(ID_BYTE_SIZE);
                 if (write_NBytes(socketFD, &messageByteLength, sizeof(messageByteLength)) < 0)
                 {
                     pthread_perror_exit("Failed to write to socket", &threadExit);
@@ -222,21 +191,62 @@ void *send_newID_repeating()
                 printf("Couldn't connect with neighbor peer: %s.\n", strerror(errno));
             }
             close(socketFD);
-            //sleep(ID_TIME_INTERVAL);
         }
-        sleep(ID_TIME_INTERVAL); // Further wait before generating a new ID.
+        sleep(send_id_time_interval); // Wait before generating a new ID.
     }
 }
-void receive_id(int fd)
+void receive_ids(int fd, int num_of_ids)
 {
-    int bytesWritten;
-    char idBuff[ID_BYTE_SIZE];
-    read_NBytes(fd, idBuff, ID_BYTE_SIZE);
-    if (is_id_generated(idBuff) == 0)
+    char newly_received_ids[num_of_ids][ID_BYTE_SIZE];
+    for (int i = 0; i < num_of_ids; i++)
     {
-        printf("WARNING!!!\nThere's a match between your generated IDs and the received ID: \"%.5s...\"\n", idBuff);
+        read_NBytes(fd, newly_received_ids[i], ID_BYTE_SIZE);
     }
-    add_new_id(&receivedIDs, &receivedIDNum, idBuff);
+    if (num_of_ids == 1)
+    {
+        pthread_mutex_lock(&received_id_lock);
+        add_new_id(&received_ids, &received_id_num, newly_received_ids[0]);
+        pthread_mutex_unlock(&received_id_lock);
+    }
+    else
+    {
+        int id = check_id_generated(newly_received_ids, num_of_ids);
+        if (id >= 0)
+        {
+            printf("***************************************************************************\n");
+            printf("There's a match between your generated IDs and the received ID: \"%.5s...\"\n", generated_ids[id]);
+            printf("***************************************************************************\n");
+        }
+    }
+}
+/*int check_id_generated(char *received_ids, int num_of_ids)
+{
+    for (int i = 0; i < generated_id_num; i++)
+    {
+        for (int j = 0; j < num_of_ids; j++)
+        {
+            printf("Received ID from list: %s\n", &received_ids[j * ID_BYTE_SIZE]);
+            if (strcmp(generated_ids[i], &received_ids[j * ID_BYTE_SIZE]) == 0)
+            {
+                return i;
+            }
+        }
+    }
+    return -1;
+}*/
+int check_id_generated(char received_ids[][ID_BYTE_SIZE], int num_of_ids)
+{
+    for (int i = 0; i < generated_id_num; i++)
+    {
+        for (int j = 0; j < num_of_ids; j++)
+        {
+            if (strcmp(generated_ids[i], received_ids[j]) == 0)
+            {
+                return i;
+            }
+        }
+    }
+    return -1;
 }
 void *manage_server_notifications()
 {
@@ -252,12 +262,14 @@ void *manage_server_notifications()
         }
         char server_notification[NOTIFICATION_BYTES];
         read_NBytes(socketFD, server_notification, NOTIFICATION_BYTES);
-        if (strcmp(server_notification, NOTIFICATION_SEND_LIST) == 0)
+        pthread_mutex_lock(&received_id_lock);
+        int curr_received_ids_num = received_id_num;
+        pthread_mutex_unlock(&received_id_lock);
+        if (strcmp(server_notification, NOTIFICATION_SEND_LIST) == 0 && curr_received_ids_num > 1)
         {
-            printf("Received the notification from the server, sending our list of contacts.\n");
-            pthread_mutex_lock(&contactsLock);
-            int contactsNum = contactPeersNum;
-            pthread_mutex_unlock(&contactsLock);
+            pthread_mutex_lock(&contacts_lock);
+            int contactsNum = contact_peers_num;
+            pthread_mutex_unlock(&contacts_lock);
             int socketFD;
             int threadRetVal;
             int n;
@@ -269,20 +281,19 @@ void *manage_server_notifications()
                 }
                 struct sockaddr_in peerAddress;
                 peerAddress.sin_family = AF_INET;
-                peerAddress.sin_addr.s_addr = htonl(contactPeers[i]);
+                peerAddress.sin_addr.s_addr = htonl(contact_peers[i]);
                 peerAddress.sin_port = htons(P2P_LISTEN_PORT);
                 char addressASCII[40];
                 inet_ntop(AF_INET, &peerAddress.sin_addr, addressASCII, sizeof(addressASCII));
                 if (connect(socketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
                 {
-                    // Receive ID is suspect, perhaps a conflict?
-                    MessageByteLength messageByteLength = htonl(receivedIDNum * sizeof(ID_BYTE_SIZE));
+                    MessageByteLength messageByteLength = htonl(curr_received_ids_num * ID_BYTE_SIZE);
                     write_NBytes(socketFD, &messageByteLength, sizeof(messageByteLength));
-                    for (int j = 0; j < receivedIDNum; j++)
+                    for (int i = 0; i < curr_received_ids_num; i++)
                     {
-                        write_NBytes(socketFD, receivedIDs[j], ID_BYTE_SIZE);
+                        write_NBytes(socketFD, received_ids[i], ID_BYTE_SIZE);
                     }
-                    printf("Sent our list of contacts to the peer at address [%s:%hu].\n", addressASCII, P2P_LISTEN_PORT); 
+                    printf("Sent our list of contacts to the peer at address [%s:%hu].\n", addressASCII, P2P_LISTEN_PORT);
                 }
                 else
                 {
@@ -296,9 +307,9 @@ void *manage_server_notifications()
 
 int is_peer_in_contacts(in_addr_t peer)
 {
-    for (int i = 0; i < contactPeersNum; i++)
+    for (int i = 0; i < contact_peers_num; i++)
     {
-        if (contactPeers[i] == peer)
+        if (contact_peers[i] == peer)
         {
             return i;
         }
@@ -307,9 +318,9 @@ int is_peer_in_contacts(in_addr_t peer)
 }
 void add_new_contact(in_addr_t peer)
 {
-    contactPeers = realloc(contactPeers, (contactPeersNum + 1) * sizeof(contactPeers[0]));
-    contactPeers[contactPeersNum] = peer;
-    contactPeersNum++;
+    contact_peers = realloc(contact_peers, (contact_peers_num + 1) * sizeof(contact_peers[0]));
+    contact_peers[contact_peers_num] = peer;
+    contact_peers_num++;
 }
 char *add_new_id(char ***buffer, int *count, char *id)
 {
@@ -324,15 +335,4 @@ char *get_dynamicrand_alphanumID()
     char* alphanumID = malloc(ID_BYTE_SIZE);
     alphanumID = rand_alphanumID(alphanumID, ID_BYTE_SIZE);
     return alphanumID;
-}
-int is_id_generated(char *id)
-{
-    for (int i = 0; i < generatedIDNum; i++)
-    {
-        if (strcmp(id, generatedIDs[i]) == 0)
-        {
-            return 0;
-        }
-    }
-    return -1;
 }

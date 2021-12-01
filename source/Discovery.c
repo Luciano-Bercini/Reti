@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <netdb.h>
 #include <pthread.h>
+#include <signal.h>
 #include "Wrapper.h"
 #include "Utilities.h"
 
@@ -25,7 +26,7 @@ I peer devono comunicare direttamente tra di loro senza il tramite del server.
 */
 
 const int MAX_LISTEN_QUEUE = 4096;
-const int NOTIFY_TIME_INTERVAL = 15;
+int notify_time_interval;
 in_addr_t *registeredClients;
 int registeredClientsNum = 0;
 pthread_mutex_t registeredClientsLock = PTHREAD_MUTEX_INITIALIZER;
@@ -41,7 +42,13 @@ struct sendpeerlist_args
 
 int main(int argc, char *argv[])
 {
-    int clientSocketFD;
+    if (argc != 2)
+    {
+        printf("You must pass a value for the notification interval.\n");
+        exit(1);
+    }
+    notify_time_interval = atoi(argv[1]);
+    signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to handle errors directly.
     pthread_t notificationThread;
     int listen_socket_fd = create_listen_socket(DISCOVERY_PORT, MAX_LISTEN_QUEUE);
     if (pthread_create(&notificationThread, NULL, notify_clients, NULL) != 0)
@@ -54,6 +61,7 @@ int main(int argc, char *argv[])
     pthread_t peerThreads[MAX_LISTEN_QUEUE];
     struct sendpeerlist_args peerlist_args[MAX_LISTEN_QUEUE];
     int threadIndex = 0;
+    int clientSocketFD;
     while (1)
     {
         socklen_t clientSize = sizeof(clientAddress);
@@ -126,7 +134,7 @@ void *send_peer_list(void *sendpeerlist_args)
         }
         int bytesWritten;
         int bytesLength = (registeredClientsNo - 1) * sizeof(in_addr_t);
-        ContactsListByteLength networkByteLength = htonl((uint32_t)bytesLength);
+        MessageByteLength networkByteLength = htonl((uint32_t)bytesLength);
         if (write_NBytes(peerlist_args.connectionSocketFD, &networkByteLength, sizeof(networkByteLength)) == sizeof(networkByteLength))
         {
             if ((bytesWritten = writev(peerlist_args.connectionSocketFD, iov, iovcount)) < 0)
@@ -150,6 +158,7 @@ void *notify_clients()
 {
     int connectionSocketFD;
     int threadRetVal;
+    char addressASCII[40];
     while (1)
     {
         pthread_mutex_lock(&registeredClientsLock);
@@ -165,7 +174,6 @@ void *notify_clients()
             peerAddress.sin_family = AF_INET;
             peerAddress.sin_addr.s_addr = htonl(registeredClients[i]);
             peerAddress.sin_port = htons(PEER_DISCOVERY_LISTEN_PORT);
-            char addressASCII[40];
             inet_ntop(AF_INET, &peerAddress.sin_addr.s_addr, addressASCII, sizeof(addressASCII));
             if (connect(connectionSocketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
             {
@@ -178,6 +186,6 @@ void *notify_clients()
             }
             close(connectionSocketFD);
         }
-        sleep(NOTIFY_TIME_INTERVAL);
+        sleep(notify_time_interval);
     }
 }

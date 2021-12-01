@@ -9,7 +9,7 @@
 #define NOTIFICATION_SEND_LIST "A"
 
 // Defines a 32 bit unsigned integer to handle the exchange of messages lengths.
-typedef unsigned int MessageByteLength;
+typedef uint32_t MessageByteLength;
 
 void perror_exit(const char *s);
 void pthread_perror_exit(const char *s, int *retVal);
