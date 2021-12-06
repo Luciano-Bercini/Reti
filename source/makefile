@@ -3,22 +3,22 @@ BIN = ../bin
 Project: Discovery Peer
 
 Discovery: Discovery.o Utilities.o Wrapper.o
-	gcc Discovery.o Utilities.o Wrapper.o -o $(BIN)/Discovery -l pthread
+	gcc discovery.o utilities.o wrapper.o -o $(BIN)/discovery -l pthread
 	
-Peer:	Peer.o
-	gcc Peer.o Utilities.o Wrapper.o -o $(BIN)/Peer -l pthread
+Peer: Peer.o
+	gcc peer.o utilities.o wrapper.o -o $(BIN)/peer -l pthread
 
-Discovery.o: Discovery.c
-	gcc -c Discovery.c
+Discovery.o: discovery.c discovery.h
+	gcc -c discovery.c
 
-Peer.o: Peer.c
-	gcc -c Peer.c
+Peer.o: peer.c peer.h
+	gcc -c peer.c
 
-Utilities.o: Utilities.c Utilities.h
-	gcc -c Utilities.c
+Utilities.o: utilities.c utilities.h
+	gcc -c utilities.c
 
-Wrapper.o: Wrapper.c Wrapper.h
-	gcc -c Wrapper.c
+Wrapper.o: wrapper.c wrapper.h
+	gcc -c wrapper.c
 
 clean:
 	rm *.o $(BIN)/Discovery $(BIN)/Peer
