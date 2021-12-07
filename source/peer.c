@@ -46,7 +46,7 @@ int main(int argc, char *argv[])
         printf("Failed to create the new thread for managing server notifications.\n");
     }
     int listen_socket_fd = create_listen_socket(P2P_LISTEN_PORT, MAX_LISTEN_QUEUE);
-    int socketFD;
+    int socket_fd;
     struct sockaddr_in clientAddress;
     fd_set active_fds;
     fd_set read_fds;
@@ -67,7 +67,7 @@ int main(int argc, char *argv[])
                 if (i == listen_socket_fd) // There is a new connection we can accept!
                 {
                     socklen_t clientSize = sizeof(clientAddress);
-                    if ((socketFD = accept(listen_socket_fd, (struct sockaddr*)&clientAddress, &clientSize)) < 0)
+                    if ((socket_fd = accept(listen_socket_fd, (struct sockaddr*)&clientAddress, &clientSize)) < 0)
                     {
                         perror_exit("Failed to accept connection");
                     }
@@ -80,10 +80,10 @@ int main(int argc, char *argv[])
                         add_new_contact(clientAddr);
                         pthread_mutex_unlock(&contacts_lock);
                     }
-                    FD_SET(socketFD, &active_fds);
-                    if (socketFD > max_fd)
+                    FD_SET(socket_fd, &active_fds);
+                    if (socket_fd > max_fd)
                     {
-                        max_fd = socketFD;
+                        max_fd = socket_fd;
                     }
                 }
                 else // Ready to read!
@@ -141,9 +141,10 @@ void *send_new_id_repeating()
         pthread_mutex_lock(&contacts_lock);
         int contactsNum = contact_peers_num;
         pthread_mutex_unlock(&contacts_lock);
-        char *alphanumID = get_dynamicrand_alphanumID();
+        char alphanum_id[ID_BYTE_SIZE];
+        rand_alphanumID(alphanum_id, ID_BYTE_SIZE);
         pthread_mutex_lock(&generated_id_lock);
-        add_new_id(&generated_ids, &generated_id_num, alphanumID);
+        add_new_id(&generated_ids, &generated_id_num, alphanum_id);
         pthread_mutex_unlock(&generated_id_lock);
         for (int i = 0; i < contactsNum; i++)
         {
@@ -151,31 +152,49 @@ void *send_new_id_repeating()
             {
                 pthread_perror_exit("Failed to open the socket", &threadExit);
             }
-            struct sockaddr_in peerAddress;
-            peerAddress.sin_family = AF_INET;
-            peerAddress.sin_addr.s_addr = htonl(contact_peers[i]);
-            peerAddress.sin_port = htons(P2P_LISTEN_PORT);
-            char addressASCII[40];
-            inet_ntop(AF_INET, &peerAddress.sin_addr, addressASCII, sizeof(addressASCII));
-            if (connect(socketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
+            pthread_t peer_thread;
+            struct send_single_id_args *args = malloc(sizeof(struct send_single_id_args));
+            args->socket_fd = socketFD;
+            args->contact_peer = contact_peers[i];
+            strcpy(args->alphanum_id, alphanum_id);
+            if (pthread_create(&peer_thread, NULL, send_single_id, (void*)args) == 0)
             {
-                MessageByteLength messageByteLength = htonl(SINGLE_ID);
-                if (write_NBytes(socketFD, &messageByteLength, sizeof(messageByteLength)) == sizeof(MessageByteLength))
-                {
-                    if (write_NBytes(socketFD, alphanumID, ID_BYTE_SIZE) == ID_BYTE_SIZE)
-                    {
-                        printf("Sent the ID \"%.5s...\" to the peer at address [%s:%hu].\n", alphanumID, addressASCII, P2P_LISTEN_PORT);
-                    }
-                }
+                pthread_detach(peer_thread);
             }
             else
             {
-                printf("Couldn't connect with neighbor peer: %s.\n", strerror(errno));
+                printf("Failed to create a new thread to handle the client.\n");
             }
-            close(socketFD);
         }
         sleep(send_id_time_interval); // Wait before generating a new ID.
     }
+}
+void *send_single_id(void *send_args)
+{
+    struct send_single_id_args args = *((struct send_single_id_args*)send_args);
+    free(send_args);
+    struct sockaddr_in peerAddress;
+    peerAddress.sin_family = AF_INET;
+    peerAddress.sin_addr.s_addr = htonl(args.contact_peer);
+    peerAddress.sin_port = htons(P2P_LISTEN_PORT);
+    char addressASCII[46];
+    inet_ntop(AF_INET, &peerAddress.sin_addr, addressASCII, sizeof(addressASCII));
+    if (connect(args.socket_fd, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
+    {
+        MessageByteLength messageByteLength = htonl(SINGLE_ID);
+        if (write_NBytes(args.socket_fd, &messageByteLength, sizeof(messageByteLength)) == sizeof(MessageByteLength))
+        {
+            if (write_NBytes(args.socket_fd, args.alphanum_id, ID_BYTE_SIZE) == ID_BYTE_SIZE)
+            {
+                printf("Sent the ID \"%.5s...\" to the peer at address [%s:%hu].\n", args.alphanum_id, addressASCII, P2P_LISTEN_PORT);
+            }
+        }
+    }
+    else
+    {
+        printf("Couldn't connect with neighbor peer: %s.\n", strerror(errno));
+    }
+    close(args.socket_fd);
 }
 void *manage_server_notifications()
 {
@@ -210,39 +229,56 @@ void send_id_list_to_contacts()
     pthread_mutex_lock(&contacts_lock);
     int contactsNum = contact_peers_num;
     pthread_mutex_unlock(&contacts_lock);
-    int socketFD;
+    int socket_fd;
     int threadRetVal;
-    int n;
     for (int i = 0; i < contactsNum; i++)
     {
-        if ((socketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+        if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
         {
             pthread_perror_exit("Failed to open the socket", &threadRetVal);
         }
-        struct sockaddr_in peerAddress;
-        peerAddress.sin_family = AF_INET;
-        peerAddress.sin_addr.s_addr = htonl(contact_peers[i]);
-        peerAddress.sin_port = htons(P2P_LISTEN_PORT);
-        char addressASCII[46]; // We could get away with less since we use IPv4, but let's keep it large enough for eventual changes.
-        inet_ntop(AF_INET, &peerAddress.sin_addr, addressASCII, sizeof(addressASCII));
-        if (connect(socketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
+        pthread_t peer_thread;
+        struct send_id_list_args *args = malloc(sizeof(struct send_id_list_args));
+        args->socket_fd = socket_fd;
+        args->contact_peer = contact_peers[i];
+        args->curr_received_ids_num = curr_received_ids_num;
+        if (pthread_create(&peer_thread, NULL, send_id_list, (void*)args) == 0)
         {
-            MessageByteLength messageByteLength = htonl(curr_received_ids_num * ID_BYTE_SIZE);
-            if (write_NBytes(socketFD, &messageByteLength, sizeof(messageByteLength)) == sizeof(messageByteLength))
-            {
-                for (int i = 0; i < curr_received_ids_num; i++)
-                {
-                    write_NBytes(socketFD, received_ids[i], ID_BYTE_SIZE);
-                }
-                printf("Sent our list of contacts to the peer at address [%s:%hu].\n", addressASCII, P2P_LISTEN_PORT);
-            }
+            pthread_detach(peer_thread);
         }
         else
         {
-            printf("Couldn't connect with neighbor peer: %s.\n", strerror(errno));
+            printf("Failed to create a new thread to handle the client.\n");
         }
-        close(socketFD);
     }
+}
+void *send_id_list(void *send_args)
+{
+    struct send_id_list_args args = *((struct send_id_list_args*)send_args);
+    free(send_args);
+    struct sockaddr_in peerAddress;
+    peerAddress.sin_family = AF_INET;
+    peerAddress.sin_addr.s_addr = htonl(args.contact_peer);
+    peerAddress.sin_port = htons(P2P_LISTEN_PORT);
+    char addressASCII[46];
+    inet_ntop(AF_INET, &peerAddress.sin_addr, addressASCII, sizeof(addressASCII));
+    if (connect(args.socket_fd, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
+    {
+        MessageByteLength messageByteLength = htonl(args.curr_received_ids_num * ID_BYTE_SIZE);
+        if (write_NBytes(args.socket_fd, &messageByteLength, sizeof(messageByteLength)) == sizeof(messageByteLength))
+        {
+            for (int i = 0; i < args.curr_received_ids_num; i++)
+            {
+                write_NBytes(args.socket_fd, received_ids[i], ID_BYTE_SIZE);
+            }
+            printf("Sent our list of contacts to the peer at address [%s:%hu].\n", addressASCII, P2P_LISTEN_PORT);
+        }
+    }
+    else
+    {
+        printf("Couldn't connect with neighbor peer: %s.\n", strerror(errno));
+    }
+    close(args.socket_fd);
 }
 void receive_single_id(int fd)
 {
@@ -310,10 +346,4 @@ char *add_new_id(char ***buffer, int *count, char *id)
     strcpy((*buffer)[*count], id);
     (*count)++;
     return id;
-}
-char *get_dynamicrand_alphanumID()
-{
-    char* alphanumID = malloc(ID_BYTE_SIZE);
-    alphanumID = rand_alphanumID(alphanumID, ID_BYTE_SIZE);
-    return alphanumID;
 }

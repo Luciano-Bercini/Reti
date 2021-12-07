@@ -3,14 +3,20 @@
 
 #define MAX_LISTEN_QUEUE 4096
 
-struct sendpeerlist_args
+struct send_client_list_args
 {
-    int connectionSocketFD;
-    int skipElement;
+    int connection_socket_fd;
+    int skip_element;
+};
+struct notify_client_args
+{
+    int socket_fd;
+    in_addr_t client_addr;
 };
 
-void *send_peer_list(void *sendpeerlist_args);
-void *notify_clients();
+void *send_peer_list(void *send_client_list_args);
+void *notify_all_clients();
+void *notify_client(void *notify_args);
 void register_client_to_list(in_addr_t client_address);
 void write_client_to_file(in_addr_t client_address);
 void load_previous_clients();

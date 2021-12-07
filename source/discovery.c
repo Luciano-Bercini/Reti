@@ -32,42 +32,42 @@ int main(int argc, char *argv[])
     notify_time_interval = atoi(argv[1]);
     signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to handle errors directly.
     load_previous_clients();
-    pthread_t notificationThread;
+    pthread_t notification_thread;
     int listen_socket_fd = create_listen_socket(DISCOVERY_PORT, MAX_LISTEN_QUEUE);
-    if (pthread_create(&notificationThread, NULL, notify_clients, NULL) != 0)
+    if (pthread_create(&notification_thread, NULL, notify_all_clients, NULL) != 0)
     {
         printf("Failed to create the notification thread!\n");
         exit(1);
     }
     printf("Listening to incoming connections...\n");
-    struct sockaddr_in clientAddress;
-    int clientSocketFD;
+    struct sockaddr_in client_addr;
+    int client_socket_fd;
     while (1)
     {
-        socklen_t clientSize = sizeof(clientAddress);
+        socklen_t client_size = sizeof(client_addr);
         // Accept a connection from the listen queue and creates a new socket to comunicate; second and third argument help identify the client.
-        if ((clientSocketFD = accept(listen_socket_fd, (struct sockaddr*)&clientAddress, &clientSize)) < 0)
+        if ((client_socket_fd = accept(listen_socket_fd, (struct sockaddr*)&client_addr, &client_size)) < 0)
         {
             perror("Failed to accept a connection");
             continue;
         }
-        char *addrASCII = inet_ntoa(clientAddress.sin_addr);
-        uint port = ntohs(clientAddress.sin_port);
-        printf("Accepting a new connection with peer [%s:%u].\n", addrASCII, port);
-        int contained = uintcontained(ntohl(clientAddress.sin_addr.s_addr), registered_clients, registered_clients_num);
+        char *addr_ASCII = inet_ntoa(client_addr.sin_addr);
+        uint port = ntohs(client_addr.sin_port);
+        printf("Accepting a new connection with peer [%s:%u].\n", addr_ASCII, port);
+        int contained = uintcontained(ntohl(client_addr.sin_addr.s_addr), registered_clients, registered_clients_num);
         if (contained < 0)
         {
             printf("Registering the new peer to the list...\n");
-            in_addr_t client_addr = ntohl(clientAddress.sin_addr.s_addr);
+            in_addr_t new_client_addr = ntohl(client_addr.sin_addr.s_addr);
             pthread_mutex_lock(&registeredClientsLock);
-            register_client_to_list(client_addr);
-            write_client_to_file(client_addr);
+            register_client_to_list(new_client_addr);
+            write_client_to_file(new_client_addr);
             pthread_mutex_unlock(&registeredClientsLock);
         }
         pthread_t peer_thread;
-        struct sendpeerlist_args *peerlist_args = malloc(sizeof(struct sendpeerlist_args));
-        peerlist_args->connectionSocketFD = clientSocketFD;
-        peerlist_args->skipElement = contained;
+        struct send_client_list_args *peerlist_args = malloc(sizeof(struct send_client_list_args));
+        peerlist_args->connection_socket_fd = client_socket_fd;
+        peerlist_args->skip_element = contained;
         if (pthread_create(&peer_thread, NULL, send_peer_list, (void*)peerlist_args) == 0)
         {
             // Detach the thread so when it's done, its resources will be cleaned up without having to join.
@@ -80,46 +80,46 @@ int main(int argc, char *argv[])
     }
     return 0;
 }
-void *send_peer_list(void *sendpeerlist_args)
+void *send_peer_list(void *send_peer_list_args)
 {
     pthread_mutex_lock(&registeredClientsLock);
-    int registeredClientsNo = registered_clients_num;
+    int registered_clients_no = registered_clients_num;
     pthread_mutex_unlock(&registeredClientsLock);
-    struct sendpeerlist_args peerlist_args = *((struct sendpeerlist_args*)sendpeerlist_args);
-    free(sendpeerlist_args);
-    if (registeredClientsNo > 0)
+    struct send_client_list_args peerlist_args = *((struct send_client_list_args*)send_peer_list_args);
+    free(send_peer_list_args);
+    if (registered_clients_no > 0)
     {
         struct iovec *iov;
         int iovcount;
-        if (peerlist_args.skipElement >= 0) // This peer was already registered in the list, we send everyone but the requesting peer.
+        if (peerlist_args.skip_element >= 0) // This peer was already registered in the list, we send everyone but the requesting peer.
         {
             iov = malloc(sizeof(struct iovec) * 2);
             iovcount = 2;
             ssize_t nwritten;
             iov[0].iov_base = registered_clients;
-            iov[0].iov_len = (peerlist_args.skipElement) * sizeof(in_addr_t);
-            iov[1].iov_base = &registered_clients[peerlist_args.skipElement + 1];
-            iov[1].iov_len = (registeredClientsNo - (peerlist_args.skipElement + 1)) * sizeof(in_addr_t);
+            iov[0].iov_len = (peerlist_args.skip_element) * sizeof(in_addr_t);
+            iov[1].iov_base = &registered_clients[peerlist_args.skip_element + 1];
+            iov[1].iov_len = (registered_clients_no - (peerlist_args.skip_element + 1)) * sizeof(in_addr_t);
         }
         else // This peer is a new peer (it wasn't contained in the list), we send everyone but the last element, which is the new peer itself.
         {
             iov = malloc(sizeof(struct iovec));
             iovcount = 1;
             iov[0].iov_base = registered_clients;
-            iov[0].iov_len = (registeredClientsNo - 1) * sizeof(in_addr_t);
+            iov[0].iov_len = (registered_clients_no - 1) * sizeof(in_addr_t);
         }
-        int bytesWritten;
-        int bytesLength = (registeredClientsNo - 1) * sizeof(in_addr_t);
-        MessageByteLength networkByteLength = htonl((uint32_t)bytesLength);
-        if (write_NBytes(peerlist_args.connectionSocketFD, &networkByteLength, sizeof(networkByteLength)) == sizeof(networkByteLength))
+        int bytes_written;
+        int bytes_length = (registered_clients_no - 1) * sizeof(in_addr_t);
+        MessageByteLength network_byte_length = htonl((uint32_t)bytes_length);
+        if (write_NBytes(peerlist_args.connection_socket_fd, &network_byte_length, sizeof(network_byte_length)) == sizeof(network_byte_length))
         {
-            if ((bytesWritten = writev(peerlist_args.connectionSocketFD, iov, iovcount)) < 0)
+            if ((bytes_written = writev(peerlist_args.connection_socket_fd, iov, iovcount)) < 0)
             {
                 perror("Failed to write to socket");
             }
             else
             {
-                printf("A list with the {%d} other peers has been sent to the newly registered peer.\n", (registeredClientsNo - 1));
+                printf("A list with the {%d} other peers has been sent to the newly registered peer.\n", (registered_clients_no - 1));
             }
         }
         else
@@ -128,42 +128,59 @@ void *send_peer_list(void *sendpeerlist_args)
         }
         free(iov);
     }
-    close(peerlist_args.connectionSocketFD);
+    close(peerlist_args.connection_socket_fd);
 }
-void *notify_clients()
+void *notify_all_clients()
 {
-    int connectionSocketFD;
-    int threadRetVal;
-    char addressASCII[40];
+    int socket_fd;
+    int thread_retval;
     while (1)
     {
         pthread_mutex_lock(&registeredClientsLock);
-        int registeredClientsNo = registered_clients_num;
+        int registered_clients_no = registered_clients_num;
         pthread_mutex_unlock(&registeredClientsLock);
-        for (int i = 0; i < registeredClientsNo; i++)
+        for (int i = 0; i < registered_clients_no; i++)
         {
-            if ((connectionSocketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+            if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
             {
-                pthread_perror_exit("Failed to open the socket", &threadRetVal);
+                pthread_perror_exit("Failed to open the socket", &thread_retval);
             }
-            struct sockaddr_in peerAddress;
-            peerAddress.sin_family = AF_INET;
-            peerAddress.sin_addr.s_addr = htonl(registered_clients[i]);
-            peerAddress.sin_port = htons(PEER_DISCOVERY_LISTEN_PORT);
-            inet_ntop(AF_INET, &peerAddress.sin_addr.s_addr, addressASCII, sizeof(addressASCII));
-            if (connect(connectionSocketFD, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
+            pthread_t notify_client_thread;
+            struct notify_client_args *args = malloc(sizeof(struct notify_client_args));
+            args->socket_fd = socket_fd;
+            args->client_addr = registered_clients[i];
+            if (pthread_create(&notify_client_thread, NULL, notify_client, (void*)args) == 0)
             {
-                write_NBytes(connectionSocketFD, &NOTIFICATION_SEND_LIST, NOTIFICATION_BYTES);
-                printf("Sent a notification to peer at address [%s:%hu].\n", addressASCII, PEER_DISCOVERY_LISTEN_PORT);
+                pthread_detach(notify_client_thread);
             }
             else
             {
-                printf("Couldn't connect with peer [%s:%hu]: %s.\n", addressASCII, PEER_DISCOVERY_LISTEN_PORT, strerror(errno));
+                printf("Failed to create a new thread to notify the client.\n");
             }
-            close(connectionSocketFD);
         }
         sleep(notify_time_interval);
     }
+}
+void *notify_client(void *notify_args)
+{
+    struct notify_client_args *args = (struct notify_client_args*)notify_args;
+    struct sockaddr_in peerAddress;
+    peerAddress.sin_family = AF_INET;
+    peerAddress.sin_addr.s_addr = htonl(args->client_addr);
+    peerAddress.sin_port = htons(PEER_DISCOVERY_LISTEN_PORT);
+    char addr_ASCII[46];
+    inet_ntop(AF_INET, &peerAddress.sin_addr.s_addr, addr_ASCII, sizeof(addr_ASCII));
+    if (connect(args->socket_fd, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
+    {
+        write_NBytes(args->socket_fd, &NOTIFICATION_SEND_LIST, NOTIFICATION_BYTES);
+        printf("Sent a notification to peer at address [%s:%hu].\n", addr_ASCII, PEER_DISCOVERY_LISTEN_PORT);
+    }
+    else
+    {
+        printf("Couldn't connect with peer [%s:%hu]: %s.\n", addr_ASCII, PEER_DISCOVERY_LISTEN_PORT, strerror(errno));
+    }
+    close(args->socket_fd);
+    free(args);
 }
 void load_previous_clients()
 {
