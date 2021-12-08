@@ -4,4 +4,6 @@
 char *rand_alphanumID(char *buffer, size_t size);
 int strcontained(const char *str, const char **haystack, int haysize);
 uint uintcontained(const uint num, const uint *nums, int nums_size);
+int min(int a, int b);
+int max(int a, int b);
 #endif

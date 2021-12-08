@@ -7,7 +7,6 @@
 #include <arpa/inet.h>
 #include <time.h>
 #include <errno.h>
-#include <netdb.h>
 #include <pthread.h>
 #include <signal.h>
 #include <sys/uio.h>
@@ -16,11 +15,8 @@
 #include "utilities.h"
 #include "vector.h"
 
-//vector registered_clientss;
 int notify_time_interval;
-in_addr_t *registered_clients;
-int registered_clients_num = 0;
-int registered_clients_capacity = 0;
+vector *registered_clients;
 pthread_mutex_t registeredClientsLock = PTHREAD_MUTEX_INITIALIZER;
 char registrations_filename[] = "registrations.dat";
 
@@ -33,7 +29,7 @@ int main(int argc, char *argv[])
     }
     notify_time_interval = atoi(argv[1]);
     signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to handle errors directly.
-    //vector_init(sizeof(in_addr_t), 64);
+    registered_clients = vector_init(sizeof(in_addr_t), 64); // Initialize the vector used to hold the registered clients.
     load_previous_clients();
     pthread_t notification_thread;
     int listen_socket_fd = create_listen_socket(DISCOVERY_PORT, MAX_LISTEN_QUEUE);
@@ -57,13 +53,13 @@ int main(int argc, char *argv[])
         char *addr_ASCII = inet_ntoa(client_addr.sin_addr);
         uint port = ntohs(client_addr.sin_port);
         printf("Accepting a new connection with peer [%s:%u].\n", addr_ASCII, port);
-        int contained = uintcontained(ntohl(client_addr.sin_addr.s_addr), registered_clients, registered_clients_num);
+        int contained = uintcontained(ntohl(client_addr.sin_addr.s_addr), registered_clients->items, registered_clients->count);
         if (contained < 0)
         {
             printf("Registering the new peer to the list...\n");
             in_addr_t new_client_addr = ntohl(client_addr.sin_addr.s_addr);
             pthread_mutex_lock(&registeredClientsLock);
-            register_client_to_list(new_client_addr);
+            vector_append(registered_clients, &new_client_addr);
             write_client_to_file(new_client_addr);
             pthread_mutex_unlock(&registeredClientsLock);
         }
@@ -86,7 +82,7 @@ int main(int argc, char *argv[])
 void *send_peer_list(void *send_peer_list_args)
 {
     pthread_mutex_lock(&registeredClientsLock);
-    int registered_clients_no = registered_clients_num;
+    int registered_clients_no = registered_clients->count;
     pthread_mutex_unlock(&registeredClientsLock);
     struct send_client_list_args peerlist_args = *((struct send_client_list_args*)send_peer_list_args);
     free(send_peer_list_args);
@@ -99,24 +95,23 @@ void *send_peer_list(void *send_peer_list_args)
             iov = malloc(sizeof(struct iovec) * 2);
             iovcount = 2;
             ssize_t nwritten;
-            iov[0].iov_base = registered_clients;
+            iov[0].iov_base = (in_addr_t*)vector_get(registered_clients, 0);
             iov[0].iov_len = (peerlist_args.skip_element) * sizeof(in_addr_t);
-            iov[1].iov_base = &registered_clients[peerlist_args.skip_element + 1];
+            iov[1].iov_base = (in_addr_t*)vector_get(registered_clients, peerlist_args.skip_element + 1);
             iov[1].iov_len = (registered_clients_no - (peerlist_args.skip_element + 1)) * sizeof(in_addr_t);
         }
         else // This peer is a new peer (it wasn't contained in the list), we send everyone but the last element, which is the new peer itself.
         {
             iov = malloc(sizeof(struct iovec));
             iovcount = 1;
-            iov[0].iov_base = registered_clients;
+            iov[0].iov_base = (in_addr_t*)vector_get(registered_clients, 0);
             iov[0].iov_len = (registered_clients_no - 1) * sizeof(in_addr_t);
         }
-        int bytes_written;
         int bytes_length = (registered_clients_no - 1) * sizeof(in_addr_t);
         MessageByteLength network_byte_length = htonl((uint32_t)bytes_length);
         if (write_NBytes(peerlist_args.connection_socket_fd, &network_byte_length, sizeof(network_byte_length)) == sizeof(network_byte_length))
         {
-            if ((bytes_written = writev(peerlist_args.connection_socket_fd, iov, iovcount)) < 0)
+            if (writev(peerlist_args.connection_socket_fd, iov, iovcount) < 0)
             {
                 perror("Failed to write to socket");
             }
@@ -140,7 +135,7 @@ void *notify_all_clients()
     while (1)
     {
         pthread_mutex_lock(&registeredClientsLock);
-        int registered_clients_no = registered_clients_num;
+        int registered_clients_no = registered_clients->count;
         pthread_mutex_unlock(&registeredClientsLock);
         for (int i = 0; i < registered_clients_no; i++)
         {
@@ -151,7 +146,7 @@ void *notify_all_clients()
             pthread_t notify_client_thread;
             struct notify_client_args *args = malloc(sizeof(struct notify_client_args));
             args->socket_fd = socket_fd;
-            args->client_addr = registered_clients[i];
+            args->client_addr = *((in_addr_t*)vector_get(registered_clients, i));
             if (pthread_create(&notify_client_thread, NULL, notify_client, (void*)args) == 0)
             {
                 pthread_detach(notify_client_thread);
@@ -195,41 +190,20 @@ void load_previous_clients()
             in_addr_t client;
             while (fread(&client, sizeof(in_addr_t), 1, registrations) > 0)
             {
-                register_client_to_list(client);
+                vector_append(registered_clients, &client);
             }
         }
-        printf("Successfully loaded {%d} clients from previous sessions.\n", registered_clients_num);
+        printf("Successfully loaded {%lu} clients from previous sessions.\n", registered_clients->count);
     }
-}
-void register_client_to_list(in_addr_t client_address)
-{
-    if (registered_clients_capacity == 0)
-    {
-        registered_clients_capacity = 128;
-        registered_clients = malloc(registered_clients_capacity * sizeof(in_addr_t));
-    }
-    if (registered_clients_num >= registered_clients_capacity)
-    {
-        registered_clients_capacity *= 2; // Double the capacity of our array.
-        void *temp = realloc(registered_clients, registered_clients_capacity * sizeof(in_addr_t));
-        if (temp == NULL)
-        {
-            printf("Failed to realloc!\n");
-            free(registered_clients);
-            exit(1);
-        }
-        registered_clients = temp;
-    }
-    registered_clients[registered_clients_num] = client_address;
-    registered_clients_num++;
 }
 void write_client_to_file(in_addr_t client_address)
 {
-    FILE *registrations = fopen(registrations_filename, "a");
+    FILE *registrations = fopen(registrations_filename, "a+");
     if (registrations != NULL)
     {
         if (fwrite(&client_address, sizeof(in_addr_t), 1, registrations) < 0)
         {
+
             perror("Failed to write to registrations file.");
         }
     }

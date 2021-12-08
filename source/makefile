@@ -2,11 +2,11 @@ BIN = ../bin
 
 Project: Discovery Peer
 
-Discovery: Discovery.o Utilities.o Wrapper.o
-	gcc discovery.o utilities.o wrapper.o -o $(BIN)/discovery -l pthread
+Discovery: Discovery.o Utilities.o Wrapper.o Vector.o
+	gcc discovery.o utilities.o wrapper.o vector.o -o $(BIN)/discovery -l pthread
 	
 Peer: Peer.o
-	gcc peer.o utilities.o wrapper.o -o $(BIN)/peer -l pthread
+	gcc peer.o utilities.o wrapper.o vector.o -o $(BIN)/peer -l pthread
 
 Discovery.o: discovery.c discovery.h
 	gcc -c discovery.c
@@ -20,6 +20,9 @@ Utilities.o: utilities.c utilities.h
 Wrapper.o: wrapper.c wrapper.h
 	gcc -c wrapper.c
 
+Vector.o: vector.c vector.h
+	gcc -c vector.c
+
 clean:
-	rm *.o $(BIN)/Discovery $(BIN)/Peer
+	rm *.o $(BIN)/discovery $(BIN)/peer
 	 

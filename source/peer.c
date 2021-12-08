@@ -12,6 +12,7 @@
 #include "peer.h"
 #include "wrapper.h"
 #include "utilities.h"
+#include "vector.h"
 
 int send_id_time_interval;
 char **generated_ids;
@@ -20,8 +21,7 @@ pthread_mutex_t generated_id_lock = PTHREAD_MUTEX_INITIALIZER;
 char **received_ids;
 int received_id_num;
 pthread_mutex_t received_id_lock = PTHREAD_MUTEX_INITIALIZER;
-in_addr_t *contact_peers;
-int contact_peers_num;
+vector *contact_peers;
 pthread_mutex_t contacts_lock = PTHREAD_MUTEX_INITIALIZER;
 
 int main(int argc, char *argv[])
@@ -77,7 +77,7 @@ int main(int argc, char *argv[])
                     {
                         printf("Received a contact from a stranger, adding it to our list of contacts.\n");
                         pthread_mutex_lock(&contacts_lock);
-                        add_new_contact(clientAddr);
+                        vector_append(contact_peers, &clientAddr);
                         pthread_mutex_unlock(&contacts_lock);
                     }
                     FD_SET(socket_fd, &active_fds);
@@ -126,10 +126,11 @@ void obtain_discovery_contacts()
     MessageByteLength contactListBytes;
     read_NBytes(connectionSocketFD, &contactListBytes, sizeof(contactListBytes));
     contactListBytes = ntohl((uint32_t)contactListBytes);
-    contact_peers = malloc(contactListBytes);
-    read_NBytes(connectionSocketFD, contact_peers, contactListBytes);
-    contact_peers_num = contactListBytes / sizeof(in_addr_t);
-    printf("Obtained the list of other peers (%d) from the discovery server.\n", contact_peers_num);
+    int contacts_num = contactListBytes / sizeof(in_addr_t);
+    contact_peers = vector_init(sizeof(in_addr_t), max(contacts_num, 32));
+    read_NBytes(connectionSocketFD, contact_peers->items, contactListBytes);
+    contact_peers->count = contacts_num;
+    printf("Obtained the list of other peers (%d) from the discovery server.\n", contacts_num);
     close(connectionSocketFD);
 }
 void *send_new_id_repeating()
@@ -139,7 +140,7 @@ void *send_new_id_repeating()
     while (1)
     {
         pthread_mutex_lock(&contacts_lock);
-        int contactsNum = contact_peers_num;
+        int contactsNum = contact_peers->count;
         pthread_mutex_unlock(&contacts_lock);
         char alphanum_id[ID_BYTE_SIZE];
         rand_alphanumID(alphanum_id, ID_BYTE_SIZE);
@@ -155,7 +156,7 @@ void *send_new_id_repeating()
             pthread_t peer_thread;
             struct send_single_id_args *args = malloc(sizeof(struct send_single_id_args));
             args->socket_fd = socketFD;
-            args->contact_peer = contact_peers[i];
+            args->contact_peer = *((in_addr_t*)vector_get(contact_peers, i));
             strcpy(args->alphanum_id, alphanum_id);
             if (pthread_create(&peer_thread, NULL, send_single_id, (void*)args) == 0)
             {
@@ -227,7 +228,7 @@ void send_id_list_to_contacts()
         return; 
     }
     pthread_mutex_lock(&contacts_lock);
-    int contactsNum = contact_peers_num;
+    int contactsNum = contact_peers->count;
     pthread_mutex_unlock(&contacts_lock);
     int socket_fd;
     int threadRetVal;
@@ -240,7 +241,7 @@ void send_id_list_to_contacts()
         pthread_t peer_thread;
         struct send_id_list_args *args = malloc(sizeof(struct send_id_list_args));
         args->socket_fd = socket_fd;
-        args->contact_peer = contact_peers[i];
+        args->contact_peer = *((in_addr_t*)vector_get(contact_peers, i));
         args->curr_received_ids_num = curr_received_ids_num;
         if (pthread_create(&peer_thread, NULL, send_id_list, (void*)args) == 0)
         {
@@ -324,20 +325,14 @@ int check_id_matches(char received_ids[][ID_BYTE_SIZE], int num_of_ids)
 }
 int is_peer_in_contacts(in_addr_t peer)
 {
-    for (int i = 0; i < contact_peers_num; i++)
+    for (int i = 0; i < contact_peers->count; i++)
     {
-        if (contact_peers[i] == peer)
+        if (*((in_addr_t*)vector_get(contact_peers, i)) == peer)
         {
             return i;
         }
     }
     return -1;
-}
-void add_new_contact(in_addr_t peer)
-{
-    contact_peers = realloc(contact_peers, (contact_peers_num + 1) * sizeof(contact_peers[0]));
-    contact_peers[contact_peers_num] = peer;
-    contact_peers_num++;
 }
 char *add_new_id(char ***buffer, int *count, char *id)
 {

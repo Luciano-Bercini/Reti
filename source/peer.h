@@ -21,7 +21,6 @@ struct send_id_list_args
 char *add_new_id(char ***buffer, int *count, char *id);
 int is_id_generated(char *id);
 int is_peer_in_contacts(in_addr_t peer);
-void add_new_contact(in_addr_t peer);
 void obtain_discovery_contacts();
 void *send_new_id_repeating();
 void *send_single_id(void *send_args);

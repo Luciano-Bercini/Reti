@@ -17,7 +17,6 @@ struct notify_client_args
 void *send_peer_list(void *send_client_list_args);
 void *notify_all_clients();
 void *notify_client(void *notify_args);
-void register_client_to_list(in_addr_t client_address);
 void write_client_to_file(in_addr_t client_address);
 void load_previous_clients();
 
