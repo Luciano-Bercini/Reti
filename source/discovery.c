@@ -14,7 +14,9 @@
 #include "discovery.h"
 #include "wrapper.h"
 #include "utilities.h"
+#include "vector.h"
 
+//vector registered_clientss;
 int notify_time_interval;
 in_addr_t *registered_clients;
 int registered_clients_num = 0;
@@ -31,6 +33,7 @@ int main(int argc, char *argv[])
     }
     notify_time_interval = atoi(argv[1]);
     signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to handle errors directly.
+    //vector_init(sizeof(in_addr_t), 64);
     load_previous_clients();
     pthread_t notification_thread;
     int listen_socket_fd = create_listen_socket(DISCOVERY_PORT, MAX_LISTEN_QUEUE);
