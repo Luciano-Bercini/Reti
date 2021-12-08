@@ -44,7 +44,6 @@ int main(int argc, char *argv[])
     while (1)
     {
         socklen_t client_size = sizeof(client_addr);
-        // Accept a connection from the listen queue and creates a new socket to comunicate; second and third argument help identify the client.
         if ((client_socket_fd = accept(listen_socket_fd, (struct sockaddr*)&client_addr, &client_size)) < 0)
         {
             perror("Failed to accept a connection");
