@@ -4,7 +4,6 @@
 #include <unistd.h>
 #include <pthread.h>
 
-// Fills the buffer with a random alphanumeric string of the given size.
 char *rand_alphanumID(char *buffer, size_t size)
 {
     const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -20,7 +19,6 @@ char *rand_alphanumID(char *buffer, size_t size)
     }
     return buffer;
 }
-// Returns the index position of the first string found in the haystack, else returns -1.
 int strcontained(const char *str, const char **haystack, int haysize)
 {
     for (int i = 0; i < haysize; i++)
@@ -32,7 +30,6 @@ int strcontained(const char *str, const char **haystack, int haysize)
     }
     return -1;
 }
-// Returns the index position of the first uint found in the nums, else returns -1.
 uint uintcontained(const uint num, const uint *nums, int nums_size)
 {
     for (int i = 0; i < nums_size; i++)

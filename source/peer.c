@@ -15,11 +15,9 @@
 #include "vector.h"
 
 int send_id_time_interval;
-char **generated_ids;
-int generated_id_num;
+vector *generated_ids;
 pthread_mutex_t generated_id_lock = PTHREAD_MUTEX_INITIALIZER;
-char **received_ids;
-int received_id_num;
+vector *received_ids;
 pthread_mutex_t received_id_lock = PTHREAD_MUTEX_INITIALIZER;
 vector *contact_peers;
 pthread_mutex_t contacts_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -32,8 +30,7 @@ int main(int argc, char *argv[])
         exit(1);
     }
     send_id_time_interval = atoi(argv[1]);
-    signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to handle errors directly.
-    srand(time(NULL));
+    initialize();
     obtain_discovery_contacts();
     pthread_t peerThread;
     if (pthread_create(&peerThread, NULL, send_new_id_repeating, NULL) != 0)
@@ -108,35 +105,43 @@ int main(int argc, char *argv[])
     }
     return 0;
 }
+void initialize()
+{
+    signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to handle errors directly.
+    srand(time(NULL)); // Seed the RNG with the current time.
+    generated_ids = vector_init(sizeof(char) * ID_BYTE_SIZE, 64); // Costruct the vector.
+    received_ids = vector_init(sizeof(char) * ID_BYTE_SIZE, 64); // Costruct the vector.
+}
 void obtain_discovery_contacts()
 {
-    int connectionSocketFD;
-    if ((connectionSocketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    int socket_fd;
+    if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
         perror_exit("Failed to open the socket");
     }
-    struct sockaddr_in discoveryAddress;
-    discoveryAddress.sin_family = AF_INET;
-    discoveryAddress.sin_addr.s_addr = inet_addr(SERVER_ADDRESS);
-    discoveryAddress.sin_port = htons(DISCOVERY_PORT);
-    if (connect(connectionSocketFD, (struct sockaddr*)&discoveryAddress, sizeof(discoveryAddress)) < 0)
+    struct sockaddr_in discovery_addr;
+    discovery_addr.sin_family = AF_INET;
+    discovery_addr.sin_addr.s_addr = inet_addr(SERVER_ADDRESS);
+    discovery_addr.sin_port = htons(DISCOVERY_PORT);
+    if (connect(socket_fd, (struct sockaddr*)&discovery_addr, sizeof(discovery_addr)) < 0)
     {
         perror_exit("Failed to connect with the discovery server");
     }
-    MessageByteLength contactListBytes;
-    full_read(connectionSocketFD, &contactListBytes, sizeof(contactListBytes));
-    contactListBytes = ntohl((uint32_t)contactListBytes);
-    int contacts_num = contactListBytes / sizeof(in_addr_t);
+    MessageByteLength contact_list_bytes;
+    full_read(socket_fd, &contact_list_bytes, sizeof(contact_list_bytes));
+    contact_list_bytes = ntohl((uint32_t)contact_list_bytes);
+    int contacts_num = contact_list_bytes / sizeof(in_addr_t);
     contact_peers = vector_init(sizeof(in_addr_t), max(contacts_num, 32));
-    full_read(connectionSocketFD, contact_peers->items, contactListBytes);
-    contact_peers->count = contacts_num;
+    full_read(socket_fd, contact_peers->items, contact_list_bytes);
+    // In this case its necessary to set count manually as we are putting them right in the internal array without any methods.
+    contact_peers->count = contacts_num; 
     printf("Obtained the list of other peers (%d) from the discovery server.\n", contacts_num);
-    close(connectionSocketFD);
+    close(socket_fd);
 }
 void *send_new_id_repeating()
 {
-    int socketFD;
-    int threadExit;
+    int socket_fd;
+    int th_exit_val;
     while (1)
     {
         pthread_mutex_lock(&contacts_lock);
@@ -145,17 +150,17 @@ void *send_new_id_repeating()
         char alphanum_id[ID_BYTE_SIZE];
         rand_alphanumID(alphanum_id, ID_BYTE_SIZE);
         pthread_mutex_lock(&generated_id_lock);
-        add_new_id(&generated_ids, &generated_id_num, alphanum_id);
+        vector_append(generated_ids, alphanum_id);
         pthread_mutex_unlock(&generated_id_lock);
         for (int i = 0; i < contactsNum; i++)
         {
-            if ((socketFD = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+            if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
             {
-                pthread_perror_exit("Failed to open the socket", &threadExit);
+                pthread_perror_exit("Failed to open the socket", &th_exit_val);
             }
             pthread_t peer_thread;
             struct send_single_id_args *args = malloc(sizeof(struct send_single_id_args));
-            args->socket_fd = socketFD;
+            args->socket_fd = socket_fd;
             args->contact_peer = *((in_addr_t*)vector_get(contact_peers, i));
             strcpy(args->alphanum_id, alphanum_id);
             if (pthread_create(&peer_thread, NULL, send_single_id, (void*)args) == 0)
@@ -221,7 +226,7 @@ void *manage_server_notifications()
 void send_id_list_to_contacts()
 {
     pthread_mutex_lock(&received_id_lock);
-    int curr_received_ids_num = received_id_num;
+    int curr_received_ids_num = received_ids->count;
     pthread_mutex_unlock(&received_id_lock);
     if (curr_received_ids_num == 0) // Guard clause in case we have no contacts to send (i.e. no one contacted us yet).
     {
@@ -270,7 +275,7 @@ void *send_id_list(void *send_args)
         {
             for (int i = 0; i < args.curr_received_ids_num; i++)
             {
-                full_write(args.socket_fd, received_ids[i], ID_BYTE_SIZE);
+                full_write(args.socket_fd, (char*)vector_get(received_ids, i), ID_BYTE_SIZE);
             }
             printf("Sent our list of contacts to the peer at address [%s:%hu].\n", addressASCII, P2P_LISTEN_PORT);
         }
@@ -286,7 +291,7 @@ void receive_single_id(int fd)
     char newly_received_id[ID_BYTE_SIZE];
     full_read(fd, newly_received_id, ID_BYTE_SIZE);
     pthread_mutex_lock(&received_id_lock);
-    add_new_id(&received_ids, &received_id_num, newly_received_id);
+    vector_append(received_ids, newly_received_id);
     pthread_mutex_unlock(&received_id_lock);
 }
 void receive_id_list(int fd, int num_of_ids)
@@ -309,13 +314,13 @@ int check_id_matches(char received_ids[][ID_BYTE_SIZE], int num_of_ids)
 {
     int matches = 0;
     pthread_mutex_lock(&generated_id_lock);
-    int ids_generated = generated_id_num;
+    int ids_generated = generated_ids->count;
     pthread_mutex_unlock(&generated_id_lock);
     for (int i = 0; i < ids_generated; i++)
     {
         for (int j = 0; j < num_of_ids; j++)
         {
-            if (strcmp(generated_ids[i], received_ids[j]) == 0)
+            if (strcmp((char*)vector_get(generated_ids, i), received_ids[j]) == 0)
             {
                 matches++;
             }
@@ -333,12 +338,4 @@ int is_peer_in_contacts(in_addr_t peer)
         }
     }
     return -1;
-}
-char *add_new_id(char ***buffer, int *count, char *id)
-{
-    *buffer = realloc(*buffer, ((*count) + 1) * sizeof(char*));
-    (*buffer)[*count] = malloc(ID_BYTE_SIZE);
-    strcpy((*buffer)[*count], id);
-    (*count)++;
-    return id;
 }

@@ -12,6 +12,7 @@ typedef struct
     void *items;
 } vector;
 
+// Initialize the vector with the given data size and capacity.
 vector *vector_init(size_t data_size, size_t initial_capacity);
 void vector_free(vector *v);
 void vector_append(vector *v, void *item);
