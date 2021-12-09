@@ -12,8 +12,9 @@
 typedef uint32_t MessageByteLength;
 
 void perror_exit(const char *s);
-void pthread_perror_exit(const char *s, int *retVal);
+void pthread_perror_exit(const char *s, int *ret_val);
 int create_listen_socket(in_port_t port, int max_listen_queue);
-ssize_t read_NBytes(int fd, void *buff, size_t bytesToRead);
-ssize_t write_NBytes(int fd, void *buff, size_t bytesToWrite);
+ssize_t full_read(int fd, void *buff, size_t bytes_to_read);
+ssize_t full_write(int fd, void *buff, size_t bytes_to_write);
+ssize_t full_writev(int fd, const struct iovec *iovec, int iov_count, size_t bytes_to_write);
 #endif

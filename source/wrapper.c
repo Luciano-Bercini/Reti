@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <time.h>
+#include <sys/uio.h>
 #include <pthread.h>
 
 void perror_exit(const char *s)
@@ -42,7 +43,7 @@ int create_listen_socket(in_port_t port, int max_listen_queue)
     }
     return listenSocketFD;
 }
-ssize_t read_NBytes(int fd, void *buff, size_t bytesToRead)
+ssize_t full_read(int fd, void *buff, size_t bytesToRead)
 {
     int n;
     size_t bytesRead = 0;
@@ -62,14 +63,35 @@ ssize_t read_NBytes(int fd, void *buff, size_t bytesToRead)
         bytesRead += n;
     }
     return bytesRead;
-}
-ssize_t write_NBytes(int fd, void *buff, size_t bytesToWrite)
+}   
+ssize_t full_write(int fd, void *buff, size_t bytes_to_write)
 {
     int n;
     size_t bytesWritten = 0;
-    while (bytesWritten < bytesToWrite)
+    while (bytesWritten < bytes_to_write)
     {
-        n = write(fd, buff, bytesToWrite);
+        n = write(fd, buff, bytes_to_write);
+        if (n == 0)
+        {
+            printf("Failed to write everything: we write less bytes than expected.\n");
+            break;
+        }
+        if (n == -1)
+        {
+            perror("Failed to write");
+            return -1;
+        }
+        bytesWritten += n;
+    }
+    return bytesWritten;
+}
+ssize_t full_writev(int fd, const struct iovec *iovec, int iov_count, size_t bytes_to_write)
+{
+    int n;
+    size_t bytesWritten = 0;
+    while (bytesWritten < bytes_to_write)
+    {
+        n = writev(fd, iovec, iov_count);
         if (n == 0)
         {
             printf("Failed to write everything: we write less bytes than expected.\n");

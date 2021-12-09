@@ -89,7 +89,7 @@ int main(int argc, char *argv[])
                 else // Ready to read!
                 {
                     MessageByteLength message_byte_length;
-                    read_NBytes(i, &message_byte_length, sizeof(message_byte_length));
+                    full_read(i, &message_byte_length, sizeof(message_byte_length));
                     message_byte_length = ntohl(message_byte_length);
                     if (message_byte_length == SINGLE_ID) // Special value (0) to distinguish from single id and list of ids.
                     {
@@ -124,11 +124,11 @@ void obtain_discovery_contacts()
         perror_exit("Failed to connect with the discovery server");
     }
     MessageByteLength contactListBytes;
-    read_NBytes(connectionSocketFD, &contactListBytes, sizeof(contactListBytes));
+    full_read(connectionSocketFD, &contactListBytes, sizeof(contactListBytes));
     contactListBytes = ntohl((uint32_t)contactListBytes);
     int contacts_num = contactListBytes / sizeof(in_addr_t);
     contact_peers = vector_init(sizeof(in_addr_t), max(contacts_num, 32));
-    read_NBytes(connectionSocketFD, contact_peers->items, contactListBytes);
+    full_read(connectionSocketFD, contact_peers->items, contactListBytes);
     contact_peers->count = contacts_num;
     printf("Obtained the list of other peers (%d) from the discovery server.\n", contacts_num);
     close(connectionSocketFD);
@@ -183,9 +183,9 @@ void *send_single_id(void *send_args)
     if (connect(args.socket_fd, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
     {
         MessageByteLength messageByteLength = htonl(SINGLE_ID);
-        if (write_NBytes(args.socket_fd, &messageByteLength, sizeof(messageByteLength)) == sizeof(MessageByteLength))
+        if (full_write(args.socket_fd, &messageByteLength, sizeof(messageByteLength)) == sizeof(MessageByteLength))
         {
-            if (write_NBytes(args.socket_fd, args.alphanum_id, ID_BYTE_SIZE) == ID_BYTE_SIZE)
+            if (full_write(args.socket_fd, args.alphanum_id, ID_BYTE_SIZE) == ID_BYTE_SIZE)
             {
                 printf("Sent the ID \"%.5s...\" to the peer at address [%s:%hu].\n", args.alphanum_id, addressASCII, P2P_LISTEN_PORT);
             }
@@ -210,7 +210,7 @@ void *manage_server_notifications()
             perror("Failed to accept connection");
         }
         char server_notification[NOTIFICATION_BYTES];
-        read_NBytes(socket_fd, server_notification, NOTIFICATION_BYTES);
+        full_read(socket_fd, server_notification, NOTIFICATION_BYTES);
         close(socket_fd);
         if (strcmp(server_notification, NOTIFICATION_SEND_LIST) == 0) // We've received a notification that asks us to send our list of contacts.
         {
@@ -266,11 +266,11 @@ void *send_id_list(void *send_args)
     if (connect(args.socket_fd, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
     {
         MessageByteLength messageByteLength = htonl(args.curr_received_ids_num * ID_BYTE_SIZE);
-        if (write_NBytes(args.socket_fd, &messageByteLength, sizeof(messageByteLength)) == sizeof(messageByteLength))
+        if (full_write(args.socket_fd, &messageByteLength, sizeof(messageByteLength)) == sizeof(messageByteLength))
         {
             for (int i = 0; i < args.curr_received_ids_num; i++)
             {
-                write_NBytes(args.socket_fd, received_ids[i], ID_BYTE_SIZE);
+                full_write(args.socket_fd, received_ids[i], ID_BYTE_SIZE);
             }
             printf("Sent our list of contacts to the peer at address [%s:%hu].\n", addressASCII, P2P_LISTEN_PORT);
         }
@@ -284,7 +284,7 @@ void *send_id_list(void *send_args)
 void receive_single_id(int fd)
 {
     char newly_received_id[ID_BYTE_SIZE];
-    read_NBytes(fd, newly_received_id, ID_BYTE_SIZE);
+    full_read(fd, newly_received_id, ID_BYTE_SIZE);
     pthread_mutex_lock(&received_id_lock);
     add_new_id(&received_ids, &received_id_num, newly_received_id);
     pthread_mutex_unlock(&received_id_lock);
@@ -294,7 +294,7 @@ void receive_id_list(int fd, int num_of_ids)
     char newly_received_ids[num_of_ids][ID_BYTE_SIZE];
     for (int i = 0; i < num_of_ids; i++)
     {
-        read_NBytes(fd, newly_received_ids[i], ID_BYTE_SIZE);
+        full_read(fd, newly_received_ids[i], ID_BYTE_SIZE);
     }
     int matches = check_id_matches(newly_received_ids, num_of_ids);
     if (matches > 0)

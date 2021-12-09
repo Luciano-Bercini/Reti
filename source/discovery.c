@@ -108,13 +108,9 @@ void *send_peer_list(void *send_peer_list_args)
         }
         int bytes_length = (registered_clients_no - 1) * sizeof(in_addr_t);
         MessageByteLength network_byte_length = htonl((uint32_t)bytes_length);
-        if (write_NBytes(peerlist_args.connection_socket_fd, &network_byte_length, sizeof(network_byte_length)) == sizeof(network_byte_length))
+        if (full_write(peerlist_args.connection_socket_fd, &network_byte_length, sizeof(network_byte_length)) == sizeof(network_byte_length))
         {
-            if (writev(peerlist_args.connection_socket_fd, iov, iovcount) < 0)
-            {
-                perror("Failed to write to socket");
-            }
-            else
+            if (full_writev(peerlist_args.connection_socket_fd, iov, iovcount, bytes_length) == bytes_length)
             {
                 printf("A list with the {%d} other peers has been sent to the newly registered peer.\n", (registered_clients_no - 1));
             }
@@ -169,7 +165,7 @@ void *notify_client(void *notify_args)
     inet_ntop(AF_INET, &peerAddress.sin_addr.s_addr, addr_ASCII, sizeof(addr_ASCII));
     if (connect(args->socket_fd, (struct sockaddr*)&peerAddress, sizeof(peerAddress)) == 0)
     {
-        write_NBytes(args->socket_fd, &NOTIFICATION_SEND_LIST, NOTIFICATION_BYTES);
+        full_write(args->socket_fd, &NOTIFICATION_SEND_LIST, NOTIFICATION_BYTES);
         printf("Sent a notification to peer at address [%s:%hu].\n", addr_ASCII, PEER_DISCOVERY_LISTEN_PORT);
     }
     else
@@ -208,4 +204,3 @@ void write_client_to_file(in_addr_t client_address)
     }
     fclose(registrations);
 }
-    
