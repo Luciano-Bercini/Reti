@@ -32,12 +32,12 @@ int main(int argc, char *argv[])
     registered_clients = vector_init(sizeof(in_addr_t), 64); // Initialize the vector used to hold the registered clients.
     load_previous_clients();
     pthread_t notification_thread;
-    int listen_socket_fd = create_listen_socket(DISCOVERY_PORT, MAX_LISTEN_QUEUE);
     if (pthread_create(&notification_thread, NULL, notify_all_clients, NULL) != 0)
     {
         printf("Failed to create the notification thread!\n");
         exit(1);
     }
+    int listen_socket_fd = create_listen_socket(DISCOVERY_PORT, MAX_LISTEN_QUEUE);
     printf("Listening to incoming connections...\n");
     struct sockaddr_in client_addr;
     int client_socket_fd;
